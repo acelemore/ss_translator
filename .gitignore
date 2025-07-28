@@ -9,6 +9,8 @@ dist/
 
 # 配置文件夹（包含敏感信息如API密钥）
 configs/
+# 但保留 fix_rules.json
+!configs/fix_rules.json
 
 # Python 缓存
 __pycache__/
