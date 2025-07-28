@@ -6,6 +6,7 @@
 # 构建文件夹
 build/
 dist/
+mods/
 
 # 配置文件夹（包含敏感信息如API密钥）
 configs/
