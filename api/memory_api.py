@@ -24,86 +24,25 @@ def api_get_translations():
         
         # 获取配置对应的翻译集合
         config_name = current_config_name.replace('.json', '')
-        collection = vector_memory.get_translation_collection(config_name)
         
         # 优化搜索：使用向量数据库的查询能力
         if search:
             filtered_items = []
             filtered_ids = []
-            
-            # 方法1：使用向量搜索（语义搜索）
-            if vector_memory.embedding_model:
-                try:
-                    # 使用向量搜索查找语义相似的内容
-                    search_results = collection.query(
-                        query_texts=[search],
-                        n_results=min(1000, page * page_size + 100),  # 获取足够的结果用于分页
-                    )
+            try:
+                results = vector_memory.fuzzy_search_translations(config_name, search)
+                filtered_items = results.get('metadatas', []) if results else []
+                filtered_ids = results.get('ids', []) if results else []
+                
+            except Exception as e:
+                print(f"ChromaDB查询失败: {e}")
+                filtered_items = []
+                filtered_ids = []
                     
-                    if search_results['metadatas'] and search_results['ids']:
-                        for metadata, chroma_id in zip(search_results['metadatas'][0], search_results['ids'][0]):
-                            # 额外验证搜索词是否确实存在于这些字段中
-                            source = metadata.get('source', '')
-                            target = metadata.get('target', '')
-                            file_path = metadata.get('file_path', '')
-                            if (search.lower() in source.lower() or 
-                                search.lower() in target.lower() or
-                                search.lower() in file_path.lower()):
-                                filtered_items.append(metadata)
-                                filtered_ids.append(chroma_id)
-                            
-                except Exception as e:
-                    print(f"向量搜索失败: {e}")
-            
-            # 方法2：如果向量搜索失败或没有结果，使用ChromaDB的获取和过滤
-            if not filtered_items:
-                try:
-                    # 获取所有数据然后过滤
-                    results = collection.get(
-                        limit=min(5000, page * page_size + 1000)  # 限制获取数量但足够分页
-                    )
-                    
-                    if results and results.get('metadatas') and results.get('ids'):
-                        for metadata, chroma_id in zip(results['metadatas'], results['ids']):
-                            source = metadata.get('source', '').lower()
-                            target = metadata.get('target', '').lower()
-                            file_path = metadata.get('file_path', '').lower()
-                            search_lower = search.lower()
-                            
-                            if (search_lower in source or 
-                                search_lower in target or
-                                search_lower in file_path):
-                                filtered_items.append(metadata)
-                                filtered_ids.append(chroma_id)
-                    
-                except Exception as e:
-                    print(f"ChromaDB查询失败: {e}")
-                    filtered_items = []
-                    filtered_ids = []
-                    
-            # 方法3：回退到全量搜索（仅在前两种方法都失败时使用）
-            if not filtered_items:
-                try:
-                    results = collection.get()
-                    if results and results.get('metadatas') and results.get('ids'):
-                        for metadata, chroma_id in zip(results['metadatas'], results['ids']):
-                            source = metadata.get('source', '').lower()
-                            target = metadata.get('target', '').lower()
-                            file_path = metadata.get('file_path', '').lower()
-                            search_lower = search.lower()
-                            
-                            if (search_lower in source or 
-                                search_lower in target or
-                                search_lower in file_path):
-                                filtered_items.append(metadata)
-                                filtered_ids.append(chroma_id)
-                except Exception as e:
-                    print(f"全量搜索也失败: {e}")
-                    filtered_items = []
-                    filtered_ids = []
         else:
             # 无搜索条件：获取所有数据（限制数量以提高性能）
             try:
+                collection = vector_memory.get_translation_collection(config_name)
                 results = collection.get(
                     limit=min(10000, page * page_size + 1000)  # 限制最大获取数量
                 )
@@ -191,28 +130,14 @@ def api_update_translation(translation_id):
             return jsonify({"success": False, "message": "译文不能为空"})
         
         config_name = current_config_name.replace('.json', '')
-        collection = vector_memory.get_translation_collection(config_name)
         
         # 根据ID获取记录
         try:
-            results = collection.get(ids=[translation_id])
-            if not results or not results.get('metadatas') or not results['metadatas']:
-                return jsonify({"success": False, "message": "记录不存在"})
             
-            # 更新记录
-            metadata = results['metadatas'][0]
-            document = results['documents'][0] if results.get('documents') else metadata.get('source', '')
-            
-            metadata['target'] = new_target
-            
-            # 重新插入更新后的数据
-            collection.upsert(
-                ids=[translation_id],
-                documents=[document],
-                metadatas=[metadata]
-            )
-            
-            return jsonify({"success": True, "message": "更新成功"})
+            if vector_memory.update_history_translation(config_name, translation_id, new_target):
+                return jsonify({"success": True, "message": "更新成功"})
+            else:
+                return jsonify({"success": False, "message": "记录不存在或更新失败"})
             
         except Exception as chroma_error:
             return jsonify({"success": False, "message": f"记录不存在或更新失败: {str(chroma_error)}"})

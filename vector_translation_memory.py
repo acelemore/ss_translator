@@ -263,9 +263,10 @@ class VectorTranslationMemory:
             }
             
             # 添加到翻译历史库
+            combined_document = self.get_combine_document(metadata)
             collection.upsert(
                 ids=[translation_id],
-                documents=[source_text],
+                documents=[combined_document],
                 metadatas=[metadata]
             )
             
@@ -273,6 +274,35 @@ class VectorTranslationMemory:
         except Exception as e:
             print(f"添加翻译历史失败: {e}")
             return False
+        
+    def update_history_translation(self, config_name: str, translation_id: str, new_target:str) -> bool:
+        collection = self.get_translation_collection(config_name)
+        results = collection.get(ids=[translation_id])
+        if not results or not results.get('metadatas') or not results['metadatas']:
+            return False
+        
+        # 更新记录
+        metadata = results['metadatas'][0]
+        metadata['target'] = new_target
+
+        document = self.get_combine_document(metadata)
+        
+        # 重新插入更新后的数据
+        collection.upsert(
+            ids=[translation_id],
+            documents=[document],
+            metadatas=[metadata]
+        )
+        return True
+        
+    def get_combine_document(self, metadata) -> str:
+        """获取组合后的文档字符串"""
+        source = metadata.get('source', '')
+        target = metadata.get('target', '')
+        context = metadata.get('context', '')
+        file_path = metadata.get('file_path', '')
+        
+        return f"SOURCE:{source} TARGET:{target} CONTEXT:{context} FILE:{file_path}"
         
     def get_exact_translation(self, config_name: str, source_text: str):
         """获取精确匹配的翻译"""
@@ -324,6 +354,23 @@ class VectorTranslationMemory:
         except Exception as e:
             print(f"搜索相似翻译失败: {e}")
             return []
+    
+    def fuzzy_search_translations(self, config_name: str, search_text: str):
+        """模糊搜索翻译历史（类似 MySQL 的 %s% 搜索）
+        
+        Args:
+            config_name: 配置名称
+            search_text: 搜索文本
+        
+        Returns:
+            匹配的翻译记录列表
+        """
+        collection = self.get_translation_collection(config_name)
+        search_results = collection.get(
+                                where_document={"$contains": search_text}
+                            )
+        return search_results
+
     
     def get_terminology_list(self) -> List[Dict]:
         """获取所有专有名词列表"""
