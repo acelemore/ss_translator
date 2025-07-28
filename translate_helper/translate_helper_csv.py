@@ -255,7 +255,7 @@ def get_text_with_or(text_list: list) -> list:
     
     for i, text in enumerate(text_list):
         # 尝试匹配OR分隔的内容
-        matches = text.split('OR')
+        matches = text.split('\r\nOR\r\n')
         # 为每个匹配的字符串创建TranslationObject
         for match in matches:
             translation_obj = TranslationObject(
