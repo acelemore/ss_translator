@@ -1,0 +1,15 @@
+{
+  "name": "jar-translator-tools",
+  "version": "1.0.0",
+  "description": "JAR翻译工具集",
+  "private": true,
+  "dependencies": {
+    "jszip": "^3.4.0",
+    "java-class-tools": "^1.3.2"
+  },
+  "scripts": {
+    "test": "node simple_jar_translator.js"
+  },
+  "author": "JAR Translation System",
+  "license": "MIT"
+}
