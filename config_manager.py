@@ -242,14 +242,24 @@ class ConfigManager:
             else:
                 # 使用默认规则
                 field_rules = {
-                    "fixed_csv_configs": {},
+                    "fixed_csv_configs": {
+                        "rules.csv": {
+                            "notes": "get_raw_text",
+                            "options": "get_options_text",
+                            "script": "get_script_text",
+                            "text": "get_text_with_OR"
+                        }
+                    },
                     "field_rules": {
                         "raw_fields": ["name", "desc", "description", "text", "notes"],
                         "never_translate": ["id", "ID", "key", "type", "class", "plugin"],
                         "script_fields": ["script"],
                         "options_fields": ["options"]
                     },
-                    "skip_values": ["", " "]
+                    "skip_values": ["", " "],
+                    "ignore_json_files": {
+                        "sounds.json": True
+                    }
                 }
             
             # 初始化配置
