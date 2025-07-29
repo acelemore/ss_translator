@@ -153,19 +153,34 @@ async function translateJarWithKeys(inputJarPath, outputJarPath, translationsFil
                             const context = `${methodName}()`;
                             
                             // 生成翻译键：类名:函数名:文本索引:原文哈希（与jar_text_extractor.js保持一致）
+                            // 尝试多种翻译键格式以提高匹配率
                             const textHash = hash(stringValue);
-                            const translationKey = `${fileName}:${context}:${i}:${textHash}`;
+                            const possibleKeys = [
+                                `${fileName}:${context}:${i}:${textHash}`,  // 原格式
+                                `${fileName}:${methodName}:${i}:${textHash}`, // 简化格式，支持actual_caller
+                            ];
+                            
+                            // 如果有更具体的调用上下文，也尝试匹配
+                            const callContext = analyzeStringUsageContext(instructions, constantPool, i);
+                            if (callContext.calledMethod) {
+                                possibleKeys.push(`${fileName}:${callContext.calledMethod}:${i}:${textHash}`);
+                            }
                             
                             let translatedValue = null;
                             let usedKey = false;
+                            let matchedKey = null;
                             
-                            // 首先尝试按translation_key匹配
-                            if (translationsByKey.has(translationKey)) {
-                                const keyData = translationsByKey.get(translationKey);
-                                if (keyData.original === stringValue && keyData.translation) {
-                                    translatedValue = keyData.translation;
-                                    usedKey = true;
-                                    keyBasedReplacements++;
+                            // 首先尝试按translation_key匹配（尝试所有可能的键）
+                            for (const key of possibleKeys) {
+                                if (translationsByKey.has(key)) {
+                                    const keyData = translationsByKey.get(key);
+                                    if (keyData.original === stringValue && keyData.translation) {
+                                        translatedValue = keyData.translation;
+                                        usedKey = true;
+                                        matchedKey = key;
+                                        keyBasedReplacements++;
+                                        break;
+                                    }
                                 }
                             }
                             
@@ -186,7 +201,7 @@ async function translateJarWithKeys(inputJarPath, outputJarPath, translationsFil
                                 totalReplacements++;
                                 alreadyMappedStrings.add(constantIndex);
                                 
-                                const keyInfo = usedKey ? ' [按key匹配]' : ' [按原文匹配]';
+                                const keyInfo = usedKey ? ` [按key匹配: ${matchedKey}]` : ' [按原文匹配]';
                                 console.log(`  [${fileName}] 替换${keyInfo}: "${stringValue.substring(0, 30)}..." -> "${translatedValue.substring(0, 30)}..."`);
                             }
                         }
@@ -334,6 +349,80 @@ function getUtf8String(constantPool, stringConstantIndex) {
 function stringToUtf8ByteArray(str) {
     const buffer = Buffer.from(str, 'utf8');
     return Array.from(buffer);
+}
+
+// 分析字符串使用上下文 - 查找紧跟在字符串加载后的方法调用
+function analyzeStringUsageContext(instructions, constantPool, stringInstructionIndex) {
+    const context = {
+        type: 'unknown',
+        calledMethod: null,
+        className: null
+    };
+    
+    // 向前查找最多10条指令，寻找方法调用
+    const maxLookAhead = Math.min(10, instructions.length - stringInstructionIndex - 1);
+    
+    for (let i = 1; i <= maxLookAhead; i++) {
+        const nextInstruction = instructions[stringInstructionIndex + i];
+        if (!nextInstruction) break;
+        
+        const { opcode, operands } = nextInstruction;
+        
+        // 查找方法调用指令
+        if (opcode === Opcode.INVOKEVIRTUAL || 
+            opcode === Opcode.INVOKESTATIC || 
+            opcode === Opcode.INVOKESPECIAL ||
+            opcode === Opcode.INVOKEINTERFACE) {
+            
+            // 获取方法引用索引
+            const methodRefIndex = (operands[0] << 8) | operands[1];
+            const methodRef = constantPool[methodRefIndex];
+            
+            if (methodRef && (methodRef.tag === ConstantType.METHODREF || 
+                            methodRef.tag === ConstantType.INTERFACE_METHODREF)) {
+                
+                // 获取类名和方法名
+                const classInfo = constantPool[methodRef.class_index];
+                const nameAndType = constantPool[methodRef.name_and_type_index];
+                
+                if (classInfo && nameAndType) {
+                    const className = getUtf8String(constantPool, classInfo.name_index);
+                    const methodName = getUtf8String(constantPool, nameAndType.name_index);
+                    
+                    if (className && methodName) {
+                        // 简化类名（去掉包名）
+                        const simpleClassName = className.split('/').pop();
+                        context.className = simpleClassName;
+                        context.calledMethod = `${simpleClassName}.${methodName}`;
+                        
+                        // 确定调用类型
+                        if (opcode === Opcode.INVOKESTATIC) {
+                            context.type = 'static_call';
+                        } else if (opcode === Opcode.INVOKEVIRTUAL) {
+                            context.type = 'virtual_call';
+                        } else if (opcode === Opcode.INVOKESPECIAL) {
+                            context.type = 'special_call';
+                        } else if (opcode === Opcode.INVOKEINTERFACE) {
+                            context.type = 'interface_call';
+                        }
+                        
+                        // 找到第一个方法调用就返回
+                        break;
+                    }
+                }
+            }
+        }
+        
+        // 如果遇到其他会改变栈状态的指令，停止搜索
+        if (opcode === Opcode.POP || opcode === Opcode.POP2 || 
+            opcode === Opcode.RETURN || opcode === Opcode.ARETURN ||
+            opcode === Opcode.IRETURN || opcode === Opcode.LRETURN ||
+            opcode === Opcode.FRETURN || opcode === Opcode.DRETURN) {
+            break;
+        }
+    }
+    
+    return context;
 }
 
 // 辅助函数：简单的字符串哈希函数（与jar_text_extractor.js保持一致）

@@ -140,7 +140,7 @@ async function extractStringsFromClass(file, classReader, fileName) {
             // 解析指令
             const instructions = InstructionParser.fromBytecode(codeAttribute.code);
             
-            // 查找字符串常量
+            // 查找字符串常量并分析调用上下文
             for (let i = 0; i < instructions.length; i++) {
                 const { opcode, operands } = instructions[i];
                 
@@ -160,18 +160,30 @@ async function extractStringsFromClass(file, classReader, fileName) {
                 if (constantEntry && constantEntry.tag === ConstantType.STRING) {
                     const stringValue = getUtf8String(constantPool, constantIndex);
                     if (stringValue) {
-                        // 构建上下文信息
-                        const context = `${methodName}()`;
+                        // 分析调用上下文 - 查找字符串后面的方法调用
+                        const callContext = analyzeStringUsageContext(instructions, constantPool, i);
+                        
+                        // 构建上下文信息 - 优先使用具体的调用方法
+                        let context = `${methodName}()`;
+                        let actualCaller = methodName;
+                        
+                        if (callContext.calledMethod) {
+                            context = `${methodName}() -> ${callContext.calledMethod}()`;
+                            actualCaller = callContext.calledMethod;
+                        }
                         
                         // 生成翻译键：类名:函数名:文本索引:原文哈希
                         const textHash = hashString(stringValue);
-                        const translationKey = `${fileName}:${context}:${i}:${textHash}`;
+                        const translationKey = `${fileName}:${actualCaller}:${i}:${textHash}`;
                         
                         stringsWithContext.push({
                             text: stringValue,
                             context: context,
                             filename: fileName,
                             method: methodName,
+                            actual_caller: actualCaller,
+                            called_method: callContext.calledMethod || null,
+                            call_type: callContext.type || 'unknown',
                             translation_key: translationKey,
                             instruction_index: i
                         });
@@ -215,6 +227,80 @@ async function extractStringsFromClass(file, classReader, fileName) {
     }
     
     return stringsWithContext;
+}
+
+// 分析字符串使用上下文 - 查找紧跟在字符串加载后的方法调用
+function analyzeStringUsageContext(instructions, constantPool, stringInstructionIndex) {
+    const context = {
+        type: 'unknown',
+        calledMethod: null,
+        className: null
+    };
+    
+    // 向前查找最多10条指令，寻找方法调用
+    const maxLookAhead = Math.min(10, instructions.length - stringInstructionIndex - 1);
+    
+    for (let i = 1; i <= maxLookAhead; i++) {
+        const nextInstruction = instructions[stringInstructionIndex + i];
+        if (!nextInstruction) break;
+        
+        const { opcode, operands } = nextInstruction;
+        
+        // 查找方法调用指令
+        if (opcode === Opcode.INVOKEVIRTUAL || 
+            opcode === Opcode.INVOKESTATIC || 
+            opcode === Opcode.INVOKESPECIAL ||
+            opcode === Opcode.INVOKEINTERFACE) {
+            
+            // 获取方法引用索引
+            const methodRefIndex = (operands[0] << 8) | operands[1];
+            const methodRef = constantPool[methodRefIndex];
+            
+            if (methodRef && (methodRef.tag === ConstantType.METHODREF || 
+                            methodRef.tag === ConstantType.INTERFACE_METHODREF)) {
+                
+                // 获取类名和方法名
+                const classInfo = constantPool[methodRef.class_index];
+                const nameAndType = constantPool[methodRef.name_and_type_index];
+                
+                if (classInfo && nameAndType) {
+                    const className = getUtf8StringDirect(constantPool, classInfo.name_index);
+                    const methodName = getUtf8StringDirect(constantPool, nameAndType.name_index);
+                    
+                    if (className && methodName) {
+                        // 简化类名（去掉包名）
+                        const simpleClassName = className.split('/').pop();
+                        context.className = simpleClassName;
+                        context.calledMethod = `${simpleClassName}.${methodName}`;
+                        
+                        // 确定调用类型
+                        if (opcode === Opcode.INVOKESTATIC) {
+                            context.type = 'static_call';
+                        } else if (opcode === Opcode.INVOKEVIRTUAL) {
+                            context.type = 'virtual_call';
+                        } else if (opcode === Opcode.INVOKESPECIAL) {
+                            context.type = 'special_call';
+                        } else if (opcode === Opcode.INVOKEINTERFACE) {
+                            context.type = 'interface_call';
+                        }
+                        
+                        // 找到第一个方法调用就返回
+                        break;
+                    }
+                }
+            }
+        }
+        
+        // 如果遇到其他会改变栈状态的指令，停止搜索
+        if (opcode === Opcode.POP || opcode === Opcode.POP2 || 
+            opcode === Opcode.RETURN || opcode === Opcode.ARETURN ||
+            opcode === Opcode.IRETURN || opcode === Opcode.LRETURN ||
+            opcode === Opcode.FRETURN || opcode === Opcode.DRETURN) {
+            break;
+        }
+    }
+    
+    return context;
 }
 
 // 简单的字符串哈希函数
