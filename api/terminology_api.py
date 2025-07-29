@@ -16,7 +16,7 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with ss_translator.  If not, see <https://www.gnu.org/licenses/>.
 """
-﻿"""
+"""
 专有名词和翻译记忆管理相关的 API 接口
 """
 import json
