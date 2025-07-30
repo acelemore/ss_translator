@@ -49,6 +49,14 @@ class TranslateHelperCSV(TranslateHelper):
             "get_options_text": get_options_text,
             "get_text_with_OR": get_text_with_or
         }
+
+        # 文字应用函数
+        self.apply_functions = {
+            "get_raw_text": self._apply_raw_translations,
+            "get_script_text": self._apply_script_translations,
+            "get_options_text": self._apply_options_translations,
+            "get_text_with_OR": self._apply_or_translations
+        }
     
     @classmethod
     def get_support_parse_func(cls) -> Dict[str, str]:
@@ -212,11 +220,12 @@ class TranslateHelperCSV(TranslateHelper):
                                 
                                 # 使用精确替换函数应用翻译
                                 if cell_translations:
-                                    modified_cell_value = self._apply_translations_to_cell(
-                                        cell_value, extract_method, cell_translations
-                                    )
-                                    row[field_name] = modified_cell_value
-                    
+                                    apply_func = self.apply_functions.get(extract_method)
+                                    if apply_func:
+                                        modified_cell_value = apply_func(cell_value, cell_translations)
+                                        row[field_name] = modified_cell_value
+                                    else:
+                                        self.logger.error(f"未知的提取方法 {extract_method}，无法应用翻译")
                     rows.append(row)
             
             # 写入翻译后的CSV文件
@@ -238,38 +247,11 @@ class TranslateHelperCSV(TranslateHelper):
                 os.remove(final_file_path)  # 删除失败的文件
             return False
     
-    def _apply_translations_to_cell(self, cell_value: str, extract_method: str, 
-                                   translations: Dict[str, str]) -> str:
-        """
-        精确地将翻译应用到单元格值中
-        
-        Args:
-            cell_value: 原始单元格值
-            extract_method: 提取方法名
-            translations: 原文->译文的映射
-            
-        Returns:
-            str: 应用翻译后的单元格值
-        """
-        if extract_method == "get_raw_text":
-            # 对于原始文本，直接替换整个内容
-            if cell_value in translations:
-                return translations[cell_value]
-            return cell_value
-            
-        elif extract_method == "get_script_text":
-            # 对于脚本文本，精确替换双引号中的内容
-            return self._apply_script_translations(cell_value, translations)
-            
-        elif extract_method == "get_options_text":
-            # 对于选项文本，精确替换格式化行中的内容
-            return self._apply_options_translations(cell_value, translations)
-            
-        elif extract_method == "get_text_with_OR":
-            # 对于OR分隔的文本，精确替换各个部分
-            return self._apply_or_translations(cell_value, translations)
-            
-        return cell_value
+    def _apply_raw_translations(self, text: str, translations: dict) -> str:
+        """直接替换原始文本中的内容"""
+        if text in translations:
+            return translations[text]
+        return text
     
     def _apply_script_translations(self, text: str, translations: Dict[str, str]) -> str:
         """精确替换双引号中的脚本文本"""
