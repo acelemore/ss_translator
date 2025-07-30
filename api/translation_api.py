@@ -324,7 +324,7 @@ def api_export_translation_package():
         else:
             mod_name = "translated_mod"
         
-        zip_filename = f"{mod_name}_translation_package.zip"
+        zip_filename = f"{mod_name}.zip"
         zip_path = Path(temp_dir) / zip_filename
         
         # 创建zip文件

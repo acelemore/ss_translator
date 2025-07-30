@@ -153,7 +153,7 @@ class TranslateHelperCSV(TranslateHelper):
     def apply_translate_objects(self, translate_objects: List[TranslationObject], 
                               file_path: str) -> bool:
         """
-        应用翻译对象到CSV文件，使用重建方式保证准确性
+        应用翻译对象到CSV文件，使用精确替换方式保证准确性
         """
         if not translate_objects:
             return True
@@ -163,7 +163,7 @@ class TranslateHelperCSV(TranslateHelper):
             translations_by_key = {}
             for obj in translate_objects:
                 if obj.approved and obj.approved_text:
-                    translations_by_key[obj.translation_key] = obj.approved_text
+                    translations_by_key[obj.translation_key] = obj
             
             if not translations_by_key:
                 self.logger.info(f"没有已审核的翻译需要应用到 {file_path}")
@@ -198,23 +198,24 @@ class TranslateHelperCSV(TranslateHelper):
                             if not cell_value or not cell_value.strip():
                                 continue
                             
-                            # 重建提取过程，找到需要翻译的文本片段
+                            # 使用精确替换方法应用翻译
                             if extract_method in self.extract_functions:
+                                # 收集此单元格需要翻译的对象
+                                cell_translations = {}
                                 extract_func = self.extract_functions[extract_method]
                                 extracted_objects = extract_func([cell_value])
                                 
-                                # 应用翻译到每个提取的对象
-                                modified_cell_value = cell_value
                                 for obj in extracted_objects:
                                     key = self.generate_translation_key(obj, row_index, field_name)
                                     if key in translations_by_key:
-                                        # 直接替换原始文本
-                                        modified_cell_value = modified_cell_value.replace(
-                                            obj.original_text, 
-                                            translations_by_key[key]
-                                        )
+                                        cell_translations[obj.original_text] = translations_by_key[key].approved_text
                                 
-                                row[field_name] = modified_cell_value
+                                # 使用精确替换函数应用翻译
+                                if cell_translations:
+                                    modified_cell_value = self._apply_translations_to_cell(
+                                        cell_value, extract_method, cell_translations
+                                    )
+                                    row[field_name] = modified_cell_value
                     
                     rows.append(row)
             
@@ -226,15 +227,110 @@ class TranslateHelperCSV(TranslateHelper):
                     writer.writeheader()
                     writer.writerows(rows)
             
-            self.logger.info(f"成功应用 {len(translations_by_key)} 个翻译到CSV文件: {file_path}")
+            applied_count = len([t for t in translations_by_key.values() if t.approved])
+            self.logger.info(f"成功应用 {applied_count} 个翻译到CSV文件: {file_path}")
             return True
             
         except Exception as e:
             self.logger.error(traceback.format_exc())
             self.logger.error(f"应用CSV翻译失败 {file_path}: {e}")
-            if os.path.exists(final_file_path):
+            if 'final_file_path' in locals() and os.path.exists(final_file_path):
                 os.remove(final_file_path)  # 删除失败的文件
             return False
+    
+    def _apply_translations_to_cell(self, cell_value: str, extract_method: str, 
+                                   translations: Dict[str, str]) -> str:
+        """
+        精确地将翻译应用到单元格值中
+        
+        Args:
+            cell_value: 原始单元格值
+            extract_method: 提取方法名
+            translations: 原文->译文的映射
+            
+        Returns:
+            str: 应用翻译后的单元格值
+        """
+        if extract_method == "get_raw_text":
+            # 对于原始文本，直接替换整个内容
+            if cell_value in translations:
+                return translations[cell_value]
+            return cell_value
+            
+        elif extract_method == "get_script_text":
+            # 对于脚本文本，精确替换双引号中的内容
+            return self._apply_script_translations(cell_value, translations)
+            
+        elif extract_method == "get_options_text":
+            # 对于选项文本，精确替换格式化行中的内容
+            return self._apply_options_translations(cell_value, translations)
+            
+        elif extract_method == "get_text_with_OR":
+            # 对于OR分隔的文本，精确替换各个部分
+            return self._apply_or_translations(cell_value, translations)
+            
+        return cell_value
+    
+    def _apply_script_translations(self, text: str, translations: Dict[str, str]) -> str:
+        """精确替换双引号中的脚本文本"""
+        def replace_quoted_text(match):
+            quoted_content = match.group(1)
+            if quoted_content in translations:
+                return f'"{translations[quoted_content]}"'
+            return match.group(0)
+        
+        return re.sub(r'"((?:[^"\\]|\\.|[\r\n])*?)"', replace_quoted_text, text, flags=re.DOTALL)
+    
+    def _apply_options_translations(self, text: str, translations: Dict[str, str]) -> str:
+        """精确替换选项文本中的内容"""
+        lines = text.split('\n')
+        result_lines = []
+        
+        for line in lines:
+            original_line = line
+            line = line.strip()
+            if not line:
+                result_lines.append(original_line)
+                continue
+            
+            # 检查是否为数字:标识符:文本内容格式
+            three_part_match = re.match(r'^(\d+:[^:]+:)(.+)$', line)
+            if three_part_match:
+                prefix = three_part_match.group(1)
+                content = three_part_match.group(2)
+                if content in translations:
+                    result_lines.append(prefix + translations[content])
+                else:
+                    result_lines.append(original_line)
+                continue
+                
+            # 检查是否为标识符:文本内容格式
+            two_part_match = re.match(r'^([^:]+:)(.+)$', line)
+            if two_part_match:
+                prefix = two_part_match.group(1)
+                content = two_part_match.group(2)
+                if content in translations:
+                    result_lines.append(prefix + translations[content])
+                else:
+                    result_lines.append(original_line)
+                continue
+            
+            result_lines.append(original_line)
+        
+        return '\n'.join(result_lines)
+    
+    def _apply_or_translations(self, text: str, translations: Dict[str, str]) -> str:
+        """精确替换OR分隔的文本"""
+        parts = text.split('\r\nOR\r\n')
+        translated_parts = []
+        
+        for part in parts:
+            if part in translations:
+                translated_parts.append(translations[part])
+            else:
+                translated_parts.append(part)
+        
+        return '\r\nOR\r\n'.join(translated_parts)
         
 def get_raw_text(text_list: list) -> list:
     """
