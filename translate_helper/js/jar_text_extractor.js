@@ -192,35 +192,9 @@ async function extractStringsFromClass(file, classReader, fileName) {
             }
         }
         
-        // 方法2: 直接扫描常量池中的所有字符串常量（作为补充）
-        for (let i = 1; i < constantPool.length; i++) {
-            const entry = constantPool[i];
-            if (entry && entry.tag === ConstantType.STRING) {
-                try {
-                    const stringValue = getUtf8String(constantPool, i);
-                    if (stringValue) {
-                        // 检查是否已经在方法中找到了
-                        const exists = stringsWithContext.some(item => item.text === stringValue);
-                        if (!exists) {
-                            const context = 'constant_pool';
-                            const textHash = hashString(stringValue);
-                            const translationKey = `${fileName}:${context}:${i}:${textHash}`;
-                            
-                            stringsWithContext.push({
-                                text: stringValue,
-                                context: context,
-                                filename: fileName,
-                                method: 'constant_pool',
-                                translation_key: translationKey,
-                                constant_index: i
-                            });
-                        }
-                    }
-                } catch (e) {
-                    // 忽略解析错误
-                }
-            }
-        }
+        // 移除方法2：直接扫描常量池的做法是危险的
+        // 常量池中的STRING常量可能包含不应该翻译的内容（如反射用的类名等）
+        // 只保留通过LDC/LDC_W指令实际加载的字符串，这些才是真正的字符串字面量
         
     } catch (error) {
         console.warn(`解析class文件 ${fileName} 时出错: ${error.message}`);

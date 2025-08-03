@@ -27,7 +27,6 @@ async function translateJarWithKeys(inputJarPath, outputJarPath, translationsFil
     
     // 读取翻译数据
     const translationsContent = fs.readFileSync(translationsFile, 'utf8');
-    const translations = new Map(); // original -> translation
     const translationsByKey = new Map(); // translation_key -> {original, translation, context}
     
     // 判断是JSON还是JSONL格式
@@ -37,11 +36,8 @@ async function translateJarWithKeys(inputJarPath, outputJarPath, translationsFil
         const translationArray = JSON.parse(translationsContent);
         if (Array.isArray(translationArray)) {
             for (const data of translationArray) {
-                if (data.original && data.translation) {
-                    translations.set(data.original, data.translation);
-                    if (data.translation_key) {
-                        translationsByKey.set(data.translation_key, data);
-                    }
+                if (data.original && data.translation && data.translation_key) {
+                    translationsByKey.set(data.translation_key, data);
                     translationCount++;
                 }
             }
@@ -53,11 +49,8 @@ async function translateJarWithKeys(inputJarPath, outputJarPath, translationsFil
             if (line.trim()) {
                 try {
                     const data = JSON.parse(line);
-                    if (data.original && data.translation) {
-                        translations.set(data.original, data.translation);
-                        if (data.translation_key) {
-                            translationsByKey.set(data.translation_key, data);
-                        }
+                    if (data.original && data.translation && data.translation_key) {
+                        translationsByKey.set(data.translation_key, data);
                         translationCount++;
                     }
                 } catch (e) {
@@ -68,7 +61,7 @@ async function translateJarWithKeys(inputJarPath, outputJarPath, translationsFil
     }
     
     console.log(`加载了 ${translationCount} 条翻译`);
-    console.log(`其中 ${translationsByKey.size} 条包含translation_key`);
+    console.log(`所有翻译都包含translation_key，只进行精确匹配`);
     
     // 读取JAR文件
     const jarData = fs.readFileSync(inputJarPath);
@@ -78,7 +71,6 @@ async function translateJarWithKeys(inputJarPath, outputJarPath, translationsFil
     const classWriter = new JavaClassFileWriter();
     
     let totalReplacements = 0;
-    let keyBasedReplacements = 0;
     let processedFiles = 0;
     let modifiedFiles = 0;
     
@@ -167,7 +159,6 @@ async function translateJarWithKeys(inputJarPath, outputJarPath, translationsFil
                             }
                             
                             let translatedValue = null;
-                            let usedKey = false;
                             let matchedKey = null;
                             
                             // 首先尝试按translation_key匹配（尝试所有可能的键）
@@ -176,18 +167,14 @@ async function translateJarWithKeys(inputJarPath, outputJarPath, translationsFil
                                     const keyData = translationsByKey.get(key);
                                     if (keyData.original === stringValue && keyData.translation) {
                                         translatedValue = keyData.translation;
-                                        usedKey = true;
                                         matchedKey = key;
-                                        keyBasedReplacements++;
                                         break;
                                     }
                                 }
                             }
                             
-                            // 如果没有key匹配，回退到原文匹配
-                            if (!translatedValue && translations.has(stringValue)) {
-                                translatedValue = translations.get(stringValue);
-                            }
+                            // 移除原文匹配回退机制，避免错误替换变量名
+                            // 只使用translation_key匹配确保安全性
                             
                             // 应用翻译
                             if (translatedValue && translatedValue !== stringValue) {
@@ -201,8 +188,7 @@ async function translateJarWithKeys(inputJarPath, outputJarPath, translationsFil
                                 totalReplacements++;
                                 alreadyMappedStrings.add(constantIndex);
                                 
-                                const keyInfo = usedKey ? ` [按key匹配: ${matchedKey}]` : ' [按原文匹配]';
-                                console.log(`  [${fileName}] 替换${keyInfo}: "${stringValue.substring(0, 30)}..." -> "${translatedValue.substring(0, 30)}..."`);
+                                console.log(`  [${fileName}] 替换 [key: ${matchedKey}]: "${stringValue.substring(0, 30)}..." -> "${translatedValue.substring(0, 30)}..."`);
                             }
                         }
                     }
@@ -226,22 +212,17 @@ async function translateJarWithKeys(inputJarPath, outputJarPath, translationsFil
                             const translationKey = `${fileName}:${context}:${constantIndex}:${textHash}`;
                             
                             let translatedValue = null;
-                            let usedKey = false;
                             
                             // 首先尝试按translation_key匹配
                             if (translationsByKey.has(translationKey)) {
                                 const keyData = translationsByKey.get(translationKey);
                                 if (keyData.original === stringValue && keyData.translation) {
                                     translatedValue = keyData.translation;
-                                    usedKey = true;
-                                    keyBasedReplacements++;
                                 }
                             }
                             
-                            // 如果没有key匹配，回退到原文匹配
-                            if (!translatedValue && translations.has(stringValue)) {
-                                translatedValue = translations.get(stringValue);
-                            }
+                            // 移除原文匹配回退机制，避免错误替换变量名
+                            // 只使用translation_key匹配确保安全性
                             
                             // 应用翻译
                             if (translatedValue && translatedValue !== stringValue) {
@@ -255,8 +236,7 @@ async function translateJarWithKeys(inputJarPath, outputJarPath, translationsFil
                                 totalReplacements++;
                                 alreadyMappedStrings.add(constantIndex);
                                 
-                                const keyInfo = usedKey ? ' [按key匹配]' : ' [按原文匹配]';
-                                console.log(`  [${fileName}] 替换${keyInfo}: "${stringValue.substring(0, 30)}..." -> "${translatedValue.substring(0, 30)}..."`);
+                                console.log(`  [${fileName}] 替换 [key: ${translationKey}]: "${stringValue.substring(0, 30)}..." -> "${translatedValue.substring(0, 30)}..."`);
                             }
                         }
                     } catch (e) {
@@ -295,12 +275,10 @@ async function translateJarWithKeys(inputJarPath, outputJarPath, translationsFil
     console.log(`\n翻译完成！`);
     console.log(`处理文件: ${processedFiles}`);
     console.log(`修改文件: ${modifiedFiles}`);
-    console.log(`成功替换: ${totalReplacements}`);
-    console.log(`按key匹配: ${keyBasedReplacements}`);
-    console.log(`按原文匹配: ${totalReplacements - keyBasedReplacements}`);
+    console.log(`成功替换: ${totalReplacements} (全部通过translation_key精确匹配)`);
     console.log(`输出大小: ${outputData.length} 字节`);
     
-    return { processedFiles, modifiedFiles, totalReplacements, keyBasedReplacements };
+    return { processedFiles, modifiedFiles, totalReplacements };
 }
 
 // 辅助函数：获取方法的Code属性
