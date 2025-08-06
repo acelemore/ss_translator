@@ -37,6 +37,7 @@ from progress_manager import ProgressManager
 import global_values
 import re
 
+
 class InterruptedError(Exception):
     """自定义异常，用于处理翻译中断"""
     pass
@@ -220,6 +221,8 @@ class ImprovedTranslator:
                     max_tokens=self.config.get("max_tokens", 8000),
                     response_format={'type': 'json_object'}
                 )
+
+                # self.logger.info(f"temperature:{self.config.get('temperature', 0.3)}, max_tokens:{self.config.get('max_tokens', 8000)}")
                 
                 message = response.choices[0].message.content
                 

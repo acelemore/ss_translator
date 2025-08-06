@@ -215,12 +215,14 @@ class ConfigManager:
             logging.error(f"删除配置失败: {e}")
             return False
     
-    def create_new_config(self, config_name: str, mod_name: str, mod_path: str, description: str = "") -> Dict[str, Any]:
+    def create_new_config(self, config_name: str, mod_name: str, mod_path: str, description: str = "", temperature: float = 0.1, max_tokens: int = 2000) -> Dict[str, Any]:
         """创建新配置"""
         config_data = {
             "config_name": mod_name,
             "mod_path": mod_path,
             "description": description,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
             "csv_files": {},
             "json_files": {},
             "jar_files": {}

@@ -119,17 +119,61 @@
           <!-- 过滤和操作栏 -->
           <div class="filter-actions">
             <div class="filter-row">
-              <el-input
-                v-model="searchText"
-                placeholder="搜索原文、译文、审核结果或上下文...（支持 \u0001 格式搜索控制字符）"
-                style="width: 300px; margin-right: 12px;"
-                clearable
-                @input="resetPagination"
-              >
-                <template #prefix>
-                  <el-icon><Search /></el-icon>
-                </template>
-              </el-input>
+              <div class="search-container">
+                <el-dropdown trigger="click" placement="bottom-start">
+                  <el-button 
+                    :type="selectedFieldsCount === 0 ? 'warning' : 'primary'"
+                    size="small" 
+                    style="border-top-right-radius: 0; border-bottom-right-radius: 0; border-right: none;"
+                    :title="`搜索字段: ${selectedFieldsText}`"
+                  >
+                    {{ selectedFieldsCount }}/4 字段
+                    <el-icon class="el-icon--right"><arrow-down /></el-icon>
+                  </el-button>
+                  <template #dropdown>
+                    <el-dropdown-menu>
+                      <div class="search-fields-selector">
+                        <div class="field-option">
+                          <el-checkbox v-model="searchFields.original" @change="resetPagination">
+                            原文
+                          </el-checkbox>
+                        </div>
+                        <div class="field-option">
+                          <el-checkbox v-model="searchFields.translation" @change="resetPagination">
+                            LLM翻译
+                          </el-checkbox>
+                        </div>
+                        <div class="field-option">
+                          <el-checkbox v-model="searchFields.approved" @change="resetPagination">
+                            审核结果
+                          </el-checkbox>
+                        </div>
+                        <div class="field-option">
+                          <el-checkbox v-model="searchFields.context" @change="resetPagination">
+                            上下文
+                          </el-checkbox>
+                        </div>
+                        <el-divider style="margin: 8px 0;" />
+                        <div class="field-actions">
+                          <el-button type="primary" size="small" @click="selectAllFields">全选</el-button>
+                          <el-button size="small" @click="clearAllFields">清空</el-button>
+                        </div>
+                      </div>
+                    </el-dropdown-menu>
+                  </template>
+                </el-dropdown>
+                <el-input
+                  v-model="searchText"
+                  placeholder="在选定字段中搜索...（支持 \u0001 格式搜索控制字符）"
+                  style="width: 300px; border-top-left-radius: 0; border-bottom-left-radius: 0;"
+                  clearable
+                  @input="resetPagination"
+                >
+                  <template #prefix>
+                    <el-icon><Search /></el-icon>
+                  </template>
+                </el-input>
+              </div>
               
               <el-select v-model="filterStatus" style="width: 150px; margin-right: 12px;" @change="resetPagination">
                 <el-option label="全部" value="all" />
@@ -335,7 +379,7 @@
 <script setup>
 import { ref, computed, onMounted, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Search } from '@element-plus/icons-vue'
+import { Search, ArrowDown } from '@element-plus/icons-vue'
 import { useAppStore } from '../stores/app'
 import { translationAPI, memoryAPI } from '../utils/api'
 
@@ -347,6 +391,12 @@ const selectedFile = ref(null)
 const translations = ref([])
 const searchText = ref('')
 const fileSearchText = ref('') // 文件搜索文本
+const searchFields = ref({
+  original: true,     // 原文
+  translation: true,  // LLM翻译
+  approved: true,     // 审核结果
+  context: true       // 上下文
+})
 const filterStatus = ref('all')
 const filterLlmSuggestion = ref('all')
 const customFilter = ref('all')
@@ -365,6 +415,27 @@ const autoSaveCounter = ref(0)
 // 监听搜索和过滤变化，重置分页
 const resetPagination = () => {
   currentPage.value = 1
+}
+
+// 字段选择器控制方法
+const selectAllFields = () => {
+  searchFields.value = {
+    original: true,
+    translation: true,
+    approved: true,
+    context: true
+  }
+  resetPagination()
+}
+
+const clearAllFields = () => {
+  searchFields.value = {
+    original: false,
+    translation: false,
+    approved: false,
+    context: false
+  }
+  resetPagination()
 }
 
 // 处理翻页并滚动到顶部
@@ -396,6 +467,24 @@ const filteredTranslationFiles = computed(() => {
   })
 })
 
+// 计算选中的搜索字段数量
+const selectedFieldsCount = computed(() => {
+  return Object.values(searchFields.value).filter(Boolean).length
+})
+
+// 获取选中的字段名称列表
+const selectedFieldsText = computed(() => {
+  const fields = []
+  if (searchFields.value.original) fields.push('原文')
+  if (searchFields.value.translation) fields.push('翻译')
+  if (searchFields.value.approved) fields.push('审核')
+  if (searchFields.value.context) fields.push('上下文')
+  
+  if (fields.length === 0) return '无字段'
+  if (fields.length === 4) return '全部字段'
+  return fields.join('、')
+})
+
 const filteredTranslations = computed(() => {
   let filtered = translations.value
 
@@ -407,28 +496,46 @@ const filteredTranslations = computed(() => {
     const searchAsControlChar = convertEscapeSequences(search)
     
     filtered = filtered.filter(item => {
-      // 将文本转换为可视化格式（用于搜索转义序列）
-      const originalAsEscape = formatTextForDisplay(item.original_text).toLowerCase()
-      const translationAsEscape = item.translation ? formatTextForDisplay(item.translation).toLowerCase() : ''
-      const approvedAsEscape = item.approved_text ? formatTextForDisplay(item.approved_text).toLowerCase() : ''
+      const results = []
       
-      return (
-        // 搜索原始文本
-        item.original_text.toLowerCase().includes(search) ||
-        (item.translation && item.translation.toLowerCase().includes(search)) ||
-        (item.approved_text && item.approved_text.toLowerCase().includes(search)) ||
-        (item.context && item.context.toLowerCase().includes(search)) ||
-        
-        // 搜索控制字符（用户输入转义序列，搜索实际控制字符）
-        item.original_text.toLowerCase().includes(searchAsControlChar) ||
-        (item.translation && item.translation.toLowerCase().includes(searchAsControlChar)) ||
-        (item.approved_text && item.approved_text.toLowerCase().includes(searchAsControlChar)) ||
-        
-        // 搜索转义序列格式（用户输入普通文本，搜索转义格式）
-        originalAsEscape.includes(search) ||
-        translationAsEscape.includes(search) ||
-        approvedAsEscape.includes(search)
-      )
+      // 根据选择的字段进行搜索
+      if (searchFields.value.original) {
+        // 搜索原文
+        const originalAsEscape = formatTextForDisplay(item.original_text).toLowerCase()
+        results.push(
+          item.original_text.toLowerCase().includes(search) ||
+          item.original_text.toLowerCase().includes(searchAsControlChar) ||
+          originalAsEscape.includes(search)
+        )
+      }
+      
+      if (searchFields.value.translation && item.translation) {
+        // 搜索LLM翻译
+        const translationAsEscape = formatTextForDisplay(item.translation).toLowerCase()
+        results.push(
+          item.translation.toLowerCase().includes(search) ||
+          item.translation.toLowerCase().includes(searchAsControlChar) ||
+          translationAsEscape.includes(search)
+        )
+      }
+      
+      if (searchFields.value.approved && item.approved_text) {
+        // 搜索审核结果
+        const approvedAsEscape = formatTextForDisplay(item.approved_text).toLowerCase()
+        results.push(
+          item.approved_text.toLowerCase().includes(search) ||
+          item.approved_text.toLowerCase().includes(searchAsControlChar) ||
+          approvedAsEscape.includes(search)
+        )
+      }
+      
+      if (searchFields.value.context && item.context) {
+        // 搜索上下文
+        results.push(item.context.toLowerCase().includes(search))
+      }
+      
+      // 只要有一个字段匹配就返回true（如果没有选择任何字段，则不显示任何结果）
+      return results.length > 0 && results.some(result => result === true)
     })
   }
 
@@ -1198,6 +1305,29 @@ onMounted(() => {
   margin-bottom: 12px;
 }
 
+.search-container {
+  display: flex;
+  align-items: center;
+  margin-right: 12px;
+}
+
+.search-fields-selector {
+  padding: 12px;
+  min-width: 150px;
+}
+
+.field-option {
+  padding: 4px 0;
+  display: flex;
+  align-items: center;
+}
+
+.field-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: space-between;
+}
+
 .action-row {
   margin-bottom: 0;
   justify-content: space-between;
@@ -1404,6 +1534,15 @@ onMounted(() => {
   .filter-row, .action-row {
     flex-direction: column;
     align-items: stretch;
+  }
+  
+  .search-container {
+    margin-right: 0;
+    margin-bottom: 12px;
+  }
+  
+  .search-container .el-input {
+    width: 100% !important;
   }
   
   .action-group {

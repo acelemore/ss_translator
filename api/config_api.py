@@ -96,9 +96,11 @@ def api_create_config():
     mod_name = data.get('mod_name')
     mod_path = data.get('mod_path')
     description = data.get('description', '')
+    temperature = data.get('temperature', 0.1)
+    max_tokens = data.get('max_tokens', 2000)
     
     try:
-        config_data = config_manager.create_new_config(config_name, mod_name, mod_path, description)
+        config_data = config_manager.create_new_config(config_name, mod_name, mod_path, description, temperature, max_tokens)
         return jsonify({"success": True, "message": "创建成功", "config": config_data})
     except Exception as e:
         return jsonify({"success": False, "message": str(e)})

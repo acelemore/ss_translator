@@ -49,11 +49,13 @@ export const configAPI = {
   }),
   
   // 创建新配置
-  createConfig: (configName, modName, modPath, description) => api.post('/configs/create', {
+  createConfig: (configName, modName, modPath, description, temperature, maxTokens) => api.post('/configs/create', {
     config_name: configName,
     mod_name: modName,
     mod_path: modPath,
-    description
+    description,
+    temperature,
+    max_tokens: maxTokens
   }),
   
   // 删除配置

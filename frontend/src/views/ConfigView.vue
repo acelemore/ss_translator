@@ -67,13 +67,20 @@
     <!-- 当前配置信息 -->
     <el-card v-if="currentConfig" class="config-info-card">
       <template #header>
-        <span>📋 当前配置信息</span>
+        <div style="display: flex; justify-content: space-between; align-items: center;">
+          <span>📋 当前配置信息</span>
+          <el-button type="primary" size="small" @click="initEditConfigForm(); showEditConfigDialog = true">
+            编辑配置
+          </el-button>
+        </div>
       </template>
       <el-descriptions :column="2" border>
         <el-descriptions-item label="配置名称">{{ currentConfig.name }}</el-descriptions-item>
-        <el-descriptions-item label="模组名称">{{ currentConfig.mod_name }}</el-descriptions-item>
-        <el-descriptions-item label="模组路径">{{ currentConfig.mod_path }}</el-descriptions-item>
-        <el-descriptions-item label="工作目录">{{ currentConfig.work_directory }}</el-descriptions-item>
+        <el-descriptions-item label="模组名称">{{ currentConfig.config_name || currentConfig.mod_name || '未设置' }}</el-descriptions-item>
+        <el-descriptions-item label="模组路径">{{ currentConfig.mod_path || '未设置' }}</el-descriptions-item>
+        <el-descriptions-item label="工作目录">{{ currentConfig.work_directory || '未设置' }}</el-descriptions-item>
+        <el-descriptions-item label="Temperature">{{ currentConfig.temperature || '0.1' }}</el-descriptions-item>
+        <el-descriptions-item label="最大令牌数">{{ currentConfig.max_tokens || '2000' }}</el-descriptions-item>
         <el-descriptions-item label="描述" :span="2">{{ currentConfig.description || '无描述' }}</el-descriptions-item>
       </el-descriptions>
     </el-card>
@@ -278,15 +285,102 @@
         <el-form-item label="描述">
           <el-input v-model="newConfigForm.description" type="textarea" />
         </el-form-item>
+        <el-form-item label="Temperature">
+          <el-input-number 
+            v-model="newConfigForm.temperature" 
+            :min="0"
+            :max="2"
+            :step="0.1"
+            :precision="1"
+            placeholder="0.1"
+            style="width: 100%"
+          />
+          <div class="form-tip">
+            控制翻译创造性，0.0-2.0之间，值越低翻译越保守，建议0.1-0.3
+          </div>
+        </el-form-item>
+        <el-form-item label="最大令牌数">
+          <el-input-number 
+            v-model="newConfigForm.max_tokens" 
+            :min="100"
+            :max="10000"
+            :step="100"
+            placeholder="2000"
+            style="width: 100%"
+          />
+          <div class="form-tip">
+            控制LLM响应的最大长度，一般设置为1000-4000之间
+          </div>
+        </el-form-item>
       </el-form>
       <template #footer>
-        <el-button @click="showCreateDialog = false">取消</el-button>
+        <el-button @click="showCreateDialog = false; newConfigForm = { configName: '', modName: '', modPath: '', description: '', temperature: 0.1, max_tokens: 2000 }">取消</el-button>
         <el-button 
           type="primary" 
           @click="createConfigHandler"
           :loading="createConfigLoading"
         >
           创建
+        </el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 编辑配置对话框 -->
+    <el-dialog
+      v-model="showEditConfigDialog"
+      title="编辑配置"
+      width="500px"
+    >
+      <el-form :model="editConfigForm" label-width="100px">
+        <el-form-item label="配置名称" required>
+          <el-input v-model="editConfigForm.configName" placeholder="不含扩展名" disabled />
+          <div class="form-tip">配置名称不可修改</div>
+        </el-form-item>
+        <el-form-item label="模组名称" required>
+          <el-input v-model="editConfigForm.modName" />
+        </el-form-item>
+        <el-form-item label="模组路径" required>
+          <el-input v-model="editConfigForm.modPath" />
+        </el-form-item>
+        <el-form-item label="描述">
+          <el-input v-model="editConfigForm.description" type="textarea" />
+        </el-form-item>
+        <el-form-item label="Temperature">
+          <el-input-number 
+            v-model="editConfigForm.temperature" 
+            :min="0"
+            :max="2"
+            :step="0.1"
+            :precision="1"
+            placeholder="0.1"
+            style="width: 100%"
+          />
+          <div class="form-tip">
+            控制翻译创造性，0.0-2.0之间，值越低翻译越保守，建议0.1-0.3
+          </div>
+        </el-form-item>
+        <el-form-item label="最大令牌数">
+          <el-input-number 
+            v-model="editConfigForm.max_tokens" 
+            :min="100"
+            :max="10000"
+            :step="100"
+            placeholder="2000"
+            style="width: 100%"
+          />
+          <div class="form-tip">
+            控制LLM响应的最大长度，一般设置为1000-4000之间
+          </div>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="showEditConfigDialog = false; resetEditConfigForm()">取消</el-button>
+        <el-button 
+          type="primary" 
+          @click="saveEditConfigHandler"
+          :loading="saveEditConfigLoading"
+        >
+          保存
         </el-button>
       </template>
     </el-dialog>
@@ -329,6 +423,20 @@
           />
           <div class="form-tip">
             控制LLM响应的最大长度，一般设置为1000-4000之间
+          </div>
+        </el-form-item>
+        <el-form-item label="Temperature">
+          <el-input-number 
+            v-model="apiConfigForm.temperature" 
+            :min="0"
+            :max="2"
+            :step="0.1"
+            :precision="1"
+            placeholder="0.1"
+            style="width: 100%"
+          />
+          <div class="form-tip">
+            控制翻译创造性，0.0-2.0之间，值越低翻译越保守，建议0.1-0.3
           </div>
         </el-form-item>
       </el-form>
@@ -599,6 +707,7 @@ const { createLoadingHandler } = useButtonLoading()
 const selectedConfig = ref('')
 const showCreateDialog = ref(false)
 const showApiConfigDialog = ref(false)
+const showEditConfigDialog = ref(false)
 const showImportDialog = ref(false)
 const uploadRef = ref()
 const selectedFile = ref(null)
@@ -722,14 +831,26 @@ const newConfigForm = ref({
   configName: '',
   modName: '',
   modPath: '',
-  description: ''
+  description: '',
+  temperature: 0.1,
+  max_tokens: 2000
+})
+
+const editConfigForm = ref({
+  configName: '',
+  modName: '',
+  modPath: '',
+  description: '',
+  temperature: 0.1,
+  max_tokens: 2000
 })
 
 const apiConfigForm = ref({
   api_key: '',
   base_url: 'https://api.openai.com/v1',
   model: 'gpt-3.5-turbo',
-  max_tokens: 2000
+  max_tokens: 2000,
+  temperature: 0.1
 })
 
 const apiStatus = ref(null)
@@ -814,7 +935,9 @@ const { handler: createConfigHandler, loading: createConfigLoading } = createLoa
       form.configName,
       form.modName, 
       form.modPath,
-      form.description
+      form.description,
+      form.temperature,
+      form.max_tokens
     )
     
     if (result.success) {
@@ -825,7 +948,9 @@ const { handler: createConfigHandler, loading: createConfigLoading } = createLoa
         configName: '',
         modName: '',
         modPath: '',
-        description: ''
+        description: '',
+        temperature: 0.1,
+        max_tokens: 2000
       }
       await loadConfigs()
       
@@ -967,6 +1092,42 @@ const { handler: saveApiConfigHandler, loading: saveApiConfigLoading } = createL
     ElMessage.error('保存API配置失败')
   }
 }, 'saveApiConfig')
+
+const { handler: saveEditConfigHandler, loading: saveEditConfigLoading } = createLoadingHandler(async () => {
+  const form = editConfigForm.value
+  if (!form.configName || !form.modName || !form.modPath) {
+    ElMessage.warning('请填写必填项')
+    return
+  }
+  
+  try {
+    // 准备要保存的配置数据
+    const configData = {
+      ...currentConfig.value,
+      config_name: form.modName,
+      mod_path: form.modPath,
+      description: form.description,
+      temperature: form.temperature,
+      max_tokens: form.max_tokens
+    }
+    
+    const result = await configAPI.saveConfig(currentConfig.value.name, configData)
+    if (result.success) {
+      ElMessage.success('配置更新成功')
+      showEditConfigDialog.value = false
+      
+      // 重新加载配置
+      await appStore.selectConfig(currentConfig.value.name)
+      await loadCurrentConfigContent()
+      resetEditConfigForm()
+    } else {
+      ElMessage.error(result.message || '更新配置失败')
+    }
+  } catch (error) {
+    console.error('更新配置失败:', error)
+    ElMessage.error('更新配置失败')
+  }
+}, 'saveEditConfig')
 
 // 加载提取函数列表
 const loadExtractFunctions = async () => {
@@ -1317,6 +1478,30 @@ const handleJarDialogClose = () => {
 
 const handleFileChange = (file) => {
   selectedFile.value = file.raw
+}
+
+const resetEditConfigForm = () => {
+  editConfigForm.value = {
+    configName: '',
+    modName: '',
+    modPath: '',
+    description: '',
+    temperature: 0.1,
+    max_tokens: 2000
+  }
+}
+
+const initEditConfigForm = () => {
+  if (currentConfig.value) {
+    editConfigForm.value = {
+      configName: currentConfig.value.name || '',
+      modName: currentConfig.value.config_name || currentConfig.value.mod_name || '',
+      modPath: currentConfig.value.mod_path || '',
+      description: currentConfig.value.description || '',
+      temperature: currentConfig.value.temperature || 0.1,
+      max_tokens: currentConfig.value.max_tokens || 2000
+    }
+  }
 }
 
 const loadApiConfig = async () => {
