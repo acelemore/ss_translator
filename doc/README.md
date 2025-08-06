@@ -21,7 +21,11 @@
    ```bash
    pip install -r requirements.txt
    ```
-4. 运行程序：
+4. 构建前端:
+   ```bash
+   cd frontend && npm run build && cd ..
+   ```
+5. 运行程序：
    ```bash
    python web_ui.py
    ```

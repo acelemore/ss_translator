@@ -108,7 +108,7 @@
           <el-pagination
             v-model="currentPage"
             :page-size="pageSize"
-            :total="filteredTerms.length"
+            :total="filteredTermsAll.length"
             layout="prev, pager, next, jumper, total"
           />
         </div>
@@ -226,7 +226,7 @@ const termForm = ref({
 const termFormRef = ref()
 
 // 计算属性
-const filteredTerms = computed(() => {
+const filteredTermsAll = computed(() => {
   let filtered = terms.value
 
   if (searchText.value) {
@@ -242,9 +242,13 @@ const filteredTerms = computed(() => {
     filtered = filtered.filter(term => term.domain === categoryFilter.value)
   }
 
+  return filtered
+})
+
+const filteredTerms = computed(() => {
   const start = (currentPage.value - 1) * pageSize.value
   const end = start + pageSize.value
-  return filtered.slice(start, end)
+  return filteredTermsAll.value.slice(start, end)
 })
 
 const categories = computed(() => {
@@ -410,6 +414,11 @@ watch(() => appStore.isConfigSelected, (newVal) => {
   if (newVal && terms.value.length === 0) {
     loadTerms()
   }
+})
+
+// 监听搜索和过滤条件变化，重置页码
+watch([searchText, categoryFilter], () => {
+  currentPage.value = 1
 })
 
 // 生命周期

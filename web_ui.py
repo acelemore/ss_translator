@@ -82,6 +82,31 @@ def create_app():
         from flask import send_from_directory
         return send_from_directory(get_resource_path('static'), filename)
     
+    @app.route('/<path:path>')
+    def catch_all(path):
+        """捕获所有前端路由，为Vue Router的HTML5 History模式提供支持"""
+        from flask import request
+        # 检查是否是API请求
+        if path.startswith('api'):
+            from flask import abort
+            abort(404)
+        
+        # 检查是否是静态资源请求
+        if any(path.endswith(ext) for ext in ['.js', '.css', '.png', '.jpg', '.jpeg', '.gif', '.ico', '.svg']):
+            from flask import abort
+            abort(404)
+        
+        # 前端路由请求，返回index.html让Vue Router处理
+        return render_template('index.html')
+    
+    @app.errorhandler(404)
+    def not_found(error):
+        """处理404错误"""
+        from flask import request
+        if request.path.startswith('/api'):
+            return {"error": "API endpoint not found"}, 404
+        return {"error": "Resource not found"}, 404
+    
     return app
 
 # 为了向后兼容，保留模块级别的app实例

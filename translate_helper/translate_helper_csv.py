@@ -303,7 +303,18 @@ class TranslateHelperCSV(TranslateHelper):
     
     def _apply_or_translations(self, text: str, translations: Dict[str, str]) -> str:
         """精确替换OR分隔的文本"""
-        parts = text.split('\r\nOR\r\n')
+        # 检测原文使用的分隔符格式
+        if '\r\nOR\r\n' in text:
+            separator = '\r\nOR\r\n'
+        elif '\nOR\n' in text:
+            separator = '\nOR\n'
+        else:
+            # 如果没有OR分隔符，直接查找整个文本的翻译
+            if text in translations:
+                return translations[text]
+            return text
+            
+        parts = text.split(separator)
         translated_parts = []
         
         for part in parts:
@@ -312,7 +323,7 @@ class TranslateHelperCSV(TranslateHelper):
             else:
                 translated_parts.append(part)
         
-        return '\r\nOR\r\n'.join(translated_parts)
+        return separator.join(translated_parts)
         
 def get_raw_text(text_list: list) -> list:
     """
@@ -350,17 +361,26 @@ def get_text_with_or(text_list: list) -> list:
     result = []
     
     for i, text in enumerate(text_list):
-        # 尝试匹配OR分隔的内容
-        matches = text.split('\r\nOR\r\n')
+        # 尝试匹配OR分隔的内容，支持多种换行符格式
+        # 先尝试 \r\nOR\r\n，再尝试 \nOR\n
+        if '\r\nOR\r\n' in text:
+            matches = text.split('\r\nOR\r\n')
+        elif '\nOR\n' in text:
+            matches = text.split('\nOR\n')
+        else:
+            # 如果没有OR分隔符，整个文本作为一个匹配项
+            matches = [text]
+            
         # 为每个匹配的字符串创建TranslationObject
         for match in matches:
-            translation_obj = TranslationObject(
-                file_name="",  # 将在helper中设置
-                original_text=match,
-                context="",
-                is_translated=False
-            )
-            result.append(translation_obj)
+            if match.strip():  # 过滤空字符串
+                translation_obj = TranslationObject(
+                    file_name="",  # 将在helper中设置
+                    original_text=match,
+                    context="",
+                    is_translated=False
+                )
+                result.append(translation_obj)
     
     return result
 

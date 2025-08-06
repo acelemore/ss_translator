@@ -32,6 +32,10 @@ from datetime import datetime
 from collections import Counter
 import chromadb
 from chromadb.config import Settings
+import ahocorasick
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class VectorTranslationMemory:
@@ -68,6 +72,11 @@ class VectorTranslationMemory:
         # 翻译历史库字典（按模组配置区分）
         self.translation_collections = {}
         
+        # 初始化 Aho-Corasick 自动机用于快速专有名词匹配
+        self.terminology_automaton = None
+        self.terminology_cache = {}  # 缓存专有名词数据 {term: term_info}
+        self._init_terminology_automaton()
+        
     
     def _get_or_create_collection(self, collection_name: str):
         """获取或创建集合"""
@@ -78,6 +87,56 @@ class VectorTranslationMemory:
                 name=collection_name,
                 metadata={"hnsw:space": "cosine"}
             )
+    
+    def _init_terminology_automaton(self):
+        """初始化 Aho-Corasick 自动机"""
+        
+        try:
+            # 创建新的自动机
+            self.terminology_automaton = ahocorasick.Automaton()
+            self.terminology_cache = {}
+            
+            # 从数据库加载所有专有名词
+            terms = self.get_terminology_list()
+            
+            for term_info in terms:
+                term = term_info['term']
+                if term:
+                    # 添加原始术语（区分大小写）
+                    self.terminology_automaton.add_word(term, (term, term_info))
+                    # 添加小写版本（不区分大小写匹配）
+                    self.terminology_automaton.add_word(term.lower(), (term, term_info))
+                    # 缓存术语信息
+                    self.terminology_cache[term.lower()] = term_info
+            
+            # 构建自动机
+            self.terminology_automaton.make_automaton()
+            
+        except Exception as e:
+            logger.error(f"初始化 Aho-Corasick 自动机失败: {e}")
+            self.terminology_automaton = None
+    
+    def _rebuild_terminology_automaton(self):
+        """重建 Aho-Corasick 自动机"""
+        self._init_terminology_automaton()
+    
+    def _add_term_to_automaton(self, term: str, term_info: Dict):
+        """向自动机添加单个术语"""
+        
+        try:
+            # 由于 ahocorasick 不支持动态添加，需要重建自动机
+            self._rebuild_terminology_automaton()
+        except Exception as e:
+            logger.error(f"添加术语到自动机失败: {e}")
+    
+    def _remove_term_from_automaton(self, term: str):
+        """从自动机移除术语"""
+        
+        try:
+            # 由于 ahocorasick 不支持动态删除，需要重建自动机
+            self._rebuild_terminology_automaton()
+        except Exception as e:
+            logger.error(f"从自动机移除术语失败: {e}")
     
     def get_translation_collection(self, config_name: str):
         """获取特定配置的翻译历史库"""
@@ -107,10 +166,105 @@ class VectorTranslationMemory:
                 metadatas=[metadata]
             )
             
+            # 更新自动机
+            term_info = {
+                'term': term,
+                'translation': translation,
+                'domain': domain or "general",
+                'notes': notes or "",
+                'created_at': metadata['created_at']
+            }
+            self._add_term_to_automaton(term, term_info)
+            
             return True
         except Exception as e:
-            print(f"添加专有名词失败: {e}")
+            logger.error(f"添加专有名词失败: {e}")
             return False
+    
+    def add_terminology_batch(self, terms_data: List[Dict]) -> Tuple[int, int, List[str]]:
+        """批量添加专有名词到向量数据库
+        
+        Args:
+            terms_data: 包含专有名词数据的列表，每个元素应包含:
+                - term: 英文术语
+                - translation: 中文翻译
+                - domain: 领域（可选，默认为 "general"）
+                - notes: 备注（可选）
+        
+        Returns:
+            Tuple[成功数量, 失败数量, 错误信息列表]
+        """
+        success_count = 0
+        error_count = 0
+        error_messages = []
+        
+        if not terms_data:
+            return 0, 0, ["没有数据需要导入"]
+        
+        # 准备批量数据
+        batch_ids = []
+        batch_documents = []
+        batch_metadatas = []
+        current_time = datetime.now().isoformat()
+        
+        for i, item in enumerate(terms_data):
+            try:
+                # 验证数据
+                if not isinstance(item, dict):
+                    error_count += 1
+                    error_messages.append(f"第 {i+1} 项数据格式错误")
+                    continue
+                
+                term = item.get('term', '').strip()
+                translation = item.get('translation', '').strip()
+                domain = item.get('domain', 'general')
+                notes = item.get('notes', '')
+                
+                if not term or not translation:
+                    error_count += 1
+                    error_messages.append(f"第 {i+1} 项术语或翻译为空")
+                    continue
+                
+                # 准备数据
+                term_id = hashlib.md5(term.encode('utf-8')).hexdigest()
+                escaped_term = self.escape_text(term)
+                
+                metadata = {
+                    "term": escaped_term,
+                    "translation": translation,
+                    "domain": domain or "general",
+                    "notes": notes or "",
+                    "created_at": current_time,
+                    "type": "terminology"
+                }
+                
+                batch_ids.append(term_id)
+                batch_documents.append(escaped_term)
+                batch_metadatas.append(metadata)
+                
+            except Exception as e:
+                error_count += 1
+                error_messages.append(f"第 {i+1} 项处理失败: {str(e)}")
+        
+        # 执行批量插入
+        if batch_ids:
+            try:
+                self.terminology_collection.upsert(
+                    ids=batch_ids,
+                    documents=batch_documents,
+                    metadatas=batch_metadatas
+                )
+                success_count = len(batch_ids)
+                
+                # 批量添加后重建自动机
+                self._rebuild_terminology_automaton()
+                
+            except Exception as e:
+                error_count += len(batch_ids)
+                error_messages.append(f"批量插入失败: {str(e)}")
+                success_count = 0
+        
+        return success_count, error_count, error_messages
     
     def search_terminology(self, text: str, threshold: float = 0.8) -> List[Dict]:
         """搜索文本中包含的专有名词"""
@@ -122,53 +276,87 @@ class VectorTranslationMemory:
             exact_matches = self._find_exact_terminology_matches(text)
             found_terms.extend(exact_matches)
             
+            # 效率太低, 先停用
             # 策略2: 分段搜索 - 将长文本分解为更小的片段进行语义搜索
-            if len(text) > 30:  # 对于较长的文本使用分段搜索
-                semantic_matches = self._find_terminology_by_segments(text, threshold)
-                found_terms.extend(semantic_matches)
-            else:
-                # 策略3: 整体语义搜索 - 对于较短的文本直接搜索
-                semantic_matches = self._find_terminology_by_semantic_search(text, threshold)
-                found_terms.extend(semantic_matches)
+            # if len(text) > 30:  # 对于较长的文本使用分段搜索
+            #     semantic_matches = self._find_terminology_by_segments(text, threshold)
+            #     found_terms.extend(semantic_matches)
+            # else:
+            #     # 策略3: 整体语义搜索 - 对于较短的文本直接搜索
+            #     semantic_matches = self._find_terminology_by_semantic_search(text, threshold)
+            #     found_terms.extend(semantic_matches)
             
             # 去重和排序
             found_terms = self._deduplicate_and_sort_terms(found_terms)
             
         except Exception as e:
-            print(f"搜索专有名词失败: {e}")
+            logger.error(f"搜索专有名词失败: {e}")
         return found_terms
     
     def _find_exact_terminology_matches(self, text: str) -> List[Dict]:
-        """精确匹配专有名词"""
+        """精确匹配专有名词 - 使用 Aho-Corasick 自动机优化"""
         exact_matches = []
+        
+            # 使用 Aho-Corasick 自动机进行快速匹配
         try:
-            # 获取所有专有名词
-            all_terms = self.get_terminology_list()
             text_lower = text.lower()
+            found_terms = set()  # 用于去重
             
-            for term_info in all_terms:
-                term = term_info['term']
-                if not term:
-                    continue
-                    
-                # 检查是否在文本中出现（不区分大小写）
-                if term.lower() in text_lower:
-                    # 进一步检查是否是完整单词匹配（避免部分匹配）
-                    import re
-                    pattern = r'\b' + re.escape(term) + r'\b'
-                    if re.search(pattern, text, re.IGNORECASE):
+            # 在原始文本和小写文本中搜索
+            for end_index, (original_term, term_info) in self.terminology_automaton.iter(text):
+                start_index = end_index - len(original_term) + 1
+                matched_text = text[start_index:end_index + 1]
+                
+                # 检查是否是完整单词匹配（避免部分匹配）
+                # if self._is_whole_word_match(text, start_index, end_index, original_term):
+                if True: # 部分匹配感觉也没什么问题, 反正最后是提交到LLM
+                    term_key = original_term.lower()
+                    if term_key not in found_terms:
+                        found_terms.add(term_key)
                         exact_matches.append({
-                            'term': term,
+                            'term': term_info['term'],
                             'translation': term_info['translation'],
                             'domain': term_info['domain'],
                             'notes': term_info['notes'],
-                            'similarity': 1.0,  # 精确匹配给最高相似度
+                            'similarity': 1.0,
                             'match_type': 'exact'
                         })
+            
+            # 在小写文本中再次搜索（不区分大小写）
+            for end_index, (original_term, term_info) in self.terminology_automaton.iter(text_lower):
+                start_index = end_index - len(original_term) + 1
+                
+                # 检查是否是完整单词匹配
+                # if self._is_whole_word_match(text_lower, start_index, end_index, original_term):
+                if True:
+                    term_key = original_term.lower()
+                    if term_key not in found_terms:
+                        found_terms.add(term_key)
+                        exact_matches.append({
+                            'term': term_info['term'],
+                            'translation': term_info['translation'],
+                            'domain': term_info['domain'],
+                            'notes': term_info['notes'],
+                            'similarity': 1.0,
+                            'match_type': 'exact'
+                        })
+                
         except Exception as e:
-            print(f"精确匹配专有名词失败: {e}")
+            pass
         
         return exact_matches
+    
+    def _is_whole_word_match(self, text: str, start_index: int, end_index: int, term: str) -> bool:
+        """检查是否是完整单词匹配"""
+        
+        # 检查匹配位置前后是否是单词边界
+        before_char = text[start_index - 1] if start_index > 0 else ' '
+        after_char = text[end_index + 1] if end_index + 1 < len(text) else ' '
+        
+        # 如果前后都是非字母数字字符，则认为是完整单词
+        return (not before_char.isalnum() and before_char != '_') and \
+               (not after_char.isalnum() and after_char != '_')
+    
     
     def _find_terminology_by_segments(self, text: str, threshold: float) -> List[Dict]:
         """通过分段搜索专有名词"""
@@ -188,7 +376,7 @@ class VectorTranslationMemory:
                     match['matched_segment'] = segment
                 segment_matches.extend(matches)
         except Exception as e:
-            print(f"分段搜索专有名词失败: {e}")
+            logger.error(f"分段搜索专有名词失败: {e}")
         
         return segment_matches
     
@@ -214,7 +402,7 @@ class VectorTranslationMemory:
                             'match_type': 'semantic'
                         })
         except Exception as e:
-            print(f"语义搜索专有名词失败: {e}")
+            logger.error(f"语义搜索专有名词失败: {e}")
         
         return semantic_matches
     
@@ -290,7 +478,7 @@ class VectorTranslationMemory:
             
             return True
         except Exception as e:
-            print(f"添加翻译历史失败: {e}")
+            logger.error(f"添加翻译历史失败: {e}")
             return False
         
     def update_history_translation(self, config_name: str, translation_id: str, new_target:str) -> bool:
@@ -335,7 +523,7 @@ class VectorTranslationMemory:
                 return results['metadatas'][0]
             return None
         except Exception as e:
-            print(f"获取精确翻译失败: {e}")
+            logger.error(f"获取精确翻译失败: {e}")
             return None
     
     def search_similar_translations(self, config_name: str, source_text: str, threshold: float, n_results: int = 3) -> List[Dict]:
@@ -366,11 +554,11 @@ class VectorTranslationMemory:
                 
                 return similar_translations
             except Exception as e:
-                print(f"语义搜索翻译历史失败: {e}")
+                logger.error(f"语义搜索翻译历史失败: {e}")
             
             return []
         except Exception as e:
-            print(f"搜索相似翻译失败: {e}")
+            logger.error(f"搜索相似翻译失败: {e}")
             return []
     
     def fuzzy_search_translations(self, config_name: str, search_text: str):
@@ -408,7 +596,7 @@ class VectorTranslationMemory:
             
             return sorted(terminology_list, key=lambda x: x['term'])
         except Exception as e:
-            print(f"获取专有名词列表失败: {e}")
+            logger.error(f"获取专有名词列表失败: {e}")
             return []
     
     def delete_terminology(self, term: str) -> bool:
@@ -416,9 +604,13 @@ class VectorTranslationMemory:
         try:
             term_id = hashlib.md5(term.encode('utf-8')).hexdigest()
             self.terminology_collection.delete(ids=[term_id])
+            
+            # 更新自动机
+            self._remove_term_from_automaton(term)
+            
             return True
         except Exception as e:
-            print(f"删除专有名词失败: {e}")
+            logger.error(f"删除专有名词失败: {e}")
             return False
     
     def analyze_high_frequency_words(self, translations: List[str], min_frequency: int = 2) -> List[Dict]:
@@ -464,7 +656,7 @@ class VectorTranslationMemory:
             
             return high_freq_words[:20]  # 返回前20个建议
         except Exception as e:
-            print(f"分析高频词失败: {e}")
+            logger.error(f"分析高频词失败: {e}")
             return []
         
     def escape_text(self, text: str) -> str:
@@ -519,7 +711,7 @@ class VectorTranslationMemory:
             
             return stats
         except Exception as e:
-            print(f"获取统计信息失败: {e}")
+            logger.error(f"获取统计信息失败: {e}")
             return {}
     
     def export_data(self, output_path: str, config_name: str = ""):
@@ -572,5 +764,5 @@ class VectorTranslationMemory:
             
             return True
         except Exception as e:
-            print(f"导出数据失败: {e}")
+            logger.error(f"导出数据失败: {e}")
             return False

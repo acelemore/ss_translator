@@ -1,9 +1,9 @@
 openai>=1.0.0
 flask>=2.0.0
 pathlib
-logging
 chromadb>=0.4.0
 anthropic
 requests
 colorama
 tqdm
+pyahocorasick

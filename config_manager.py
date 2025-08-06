@@ -173,6 +173,12 @@ class ConfigManager:
         # 合并配置：全局配置作为基础，模组配置覆盖
         merged_config = global_config.copy()
         merged_config.update(mod_config)
+        # api密钥, 模型, api接口继承全局
+        merged_config.update({
+            "api_key": global_config["api_key"],
+            "base_url": global_config["base_url"],
+            "model": global_config["model"]
+        })
         
         return merged_config
     

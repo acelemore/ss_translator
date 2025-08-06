@@ -204,37 +204,8 @@ def api_import_terminology():
         if not isinstance(import_data, list):
             return jsonify({"success": False, "message": "JSON文件格式错误，应为数组格式"})
         
-        # 导入数据
-        success_count = 0
-        error_count = 0
-        error_messages = []
-        
-        for item in import_data:
-            if not isinstance(item, dict):
-                error_count += 1
-                error_messages.append("发现非对象类型的数据项")
-                continue
-            
-            term = item.get('term', '').strip()
-            translation = item.get('translation', '').strip()
-            domain = item.get('domain', 'general')
-            notes = item.get('notes', '')
-            
-            if not term or not translation:
-                error_count += 1
-                error_messages.append(f"术语或翻译为空: {term}")
-                continue
-            
-            try:
-                success = vector_memory.add_terminology(term, translation, domain, notes)
-                if success:
-                    success_count += 1
-                else:
-                    error_count += 1
-                    error_messages.append(f"添加术语失败: {term}")
-            except Exception as e:
-                error_count += 1
-                error_messages.append(f"添加术语 '{term}' 时出错: {str(e)}")
+        # 使用批量导入方法
+        success_count, error_count, error_messages = vector_memory.add_terminology_batch(import_data)
         
         # 返回导入结果
         message = f"导入完成：成功 {success_count} 条"
