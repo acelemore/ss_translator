@@ -27,6 +27,7 @@ import json
 import hashlib
 import re
 from pathlib import Path
+import traceback
 from typing import Dict, List, Optional, Tuple, Set
 from datetime import datetime
 from collections import Counter
@@ -34,6 +35,7 @@ import chromadb
 from chromadb.config import Settings
 import ahocorasick
 import logging
+from translation_object import TranslationObject
 
 logger = logging.getLogger(__name__)
 
@@ -276,15 +278,14 @@ class VectorTranslationMemory:
             exact_matches = self._find_exact_terminology_matches(text)
             found_terms.extend(exact_matches)
             
-            # 效率太低, 先停用
             # 策略2: 分段搜索 - 将长文本分解为更小的片段进行语义搜索
-            # if len(text) > 30:  # 对于较长的文本使用分段搜索
-            #     semantic_matches = self._find_terminology_by_segments(text, threshold)
-            #     found_terms.extend(semantic_matches)
-            # else:
-            #     # 策略3: 整体语义搜索 - 对于较短的文本直接搜索
-            #     semantic_matches = self._find_terminology_by_semantic_search(text, threshold)
-            #     found_terms.extend(semantic_matches)
+            if len(text) > 10:  # 对于较长的文本使用分段搜索
+                semantic_matches = self._find_terminology_by_segments(text, threshold)
+                found_terms.extend(semantic_matches)
+            else:
+                # 策略3: 整体语义搜索 - 对于较短的文本直接搜索
+                semantic_matches = self._find_terminology_by_semantic_search(text, threshold)
+                found_terms.extend(semantic_matches)
             
             # 去重和排序
             found_terms = self._deduplicate_and_sort_terms(found_terms)
@@ -406,7 +407,7 @@ class VectorTranslationMemory:
         
         return semantic_matches
     
-    def _split_text_into_segments(self, text: str, max_segment_length: int = 30) -> List[str]:
+    def _split_text_into_segments(self, text: str, max_segment_length: int = 10) -> List[str]:
         """将文本分解为更小的片段"""
         segments = []
         
@@ -449,89 +450,181 @@ class VectorTranslationMemory:
         return unique_terms
     
 
-    def add_translation_history(self, config_name: str, source_text: str, target_text: str, 
-                              context: str = "", llm_reason: str = "", file_path: str = "") -> bool:
-        """添加翻译历史到特定配置的库中"""
+    def add_translation_history(self, config_name: str, translation_obj: TranslationObject) -> str:
+        """添加翻译历史到特定配置的库中
+        
+        Args:
+            config_name: 配置名称
+            translation_obj: 翻译对象
+        
+        Returns:
+            翻译记录的translation_key，失败返回空字符串
+        """
         try:
             collection = self.get_translation_collection(config_name)
-            source_text = self.escape_text(source_text)
-            translation_id = hashlib.md5((source_text + target_text + str(datetime.now())).encode('utf-8')).hexdigest()
+            source_text = self.escape_text(translation_obj.original_text)
             
+            # 使用translation_key作为ID，如果没有则生成一个
+            translation_key = translation_obj.translation_key
+            if not translation_key:
+                # 如果translation_key为空，生成一个新的
+                translation_key = hashlib.md5((source_text + translation_obj.file_name + str(datetime.now())).encode('utf-8')).hexdigest()
+            
+            # 精简metadata，只存储语义搜索必需的字段
             metadata = {
-                "source": source_text,
-                "target": target_text,
-                "context": context or "",
-                "llm_reason": llm_reason or "",
-                "file_path": file_path or "",
+                "original_text": source_text,
+                "translation_key": translation_key,
                 "config_name": config_name,
                 "created_at": datetime.now().isoformat(),
                 "type": "translation"
             }
             
             # 添加到翻译历史库
-            combined_document = self.get_combine_document(metadata)
+            # documents字段只存储原文，用于语义搜索
             collection.upsert(
-                ids=[translation_id],
-                documents=[combined_document],
+                ids=[translation_key],
+                documents=[source_text],  # 只存储原文用于语义搜索
                 metadatas=[metadata]
             )
             
-            return True
+            return translation_key
         except Exception as e:
             logger.error(f"添加翻译历史失败: {e}")
-            return False
+            return ""
         
-    def update_history_translation(self, config_name: str, translation_id: str, new_target:str) -> bool:
-        collection = self.get_translation_collection(config_name)
-        results = collection.get(ids=[translation_id])
-        if not results or not results.get('metadatas') or not results['metadatas']:
-            return False
+    def update_history_translation(self, config_name: str, translation_key: str, updated_translation_obj: TranslationObject) -> bool:
+        """更新翻译历史记录
         
-        # 更新记录
-        metadata = results['metadatas'][0]
-        metadata['target'] = new_target
+        Args:
+            config_name: 配置名称
+            translation_key: 翻译记录的唯一标识
+            updated_translation_obj: 更新后的翻译对象
+        
+        Returns:
+            更新是否成功
+        """
+        try:
+            collection = self.get_translation_collection(config_name)
+            results = collection.get(ids=[translation_key])
+            if not results or not results.get('metadatas') or not results['metadatas']:
+                return False
+            
+            # 获取原有记录
+            original_metadata = results['metadatas'][0]
+            
+            # 精简metadata，只保留语义搜索必需的字段
+            updated_metadata = {
+                "original_text": self.escape_text(updated_translation_obj.original_text),
+                "translation_key": translation_key,
+                "config_name": config_name,
+                "created_at": original_metadata.get("created_at", datetime.now().isoformat()),
+                "updated_at": datetime.now().isoformat(),
+                "type": "translation"
+            }
 
-        document = self.get_combine_document(metadata)
-        
-        # 重新插入更新后的数据
-        collection.upsert(
-            ids=[translation_id],
-            documents=[document],
-            metadatas=[metadata]
-        )
-        return True
+            document = self.escape_text(updated_translation_obj.original_text)  # 只存储原文
+            
+            # 重新插入更新后的数据
+            collection.upsert(
+                ids=[translation_key],
+                documents=[document],
+                metadatas=[updated_metadata]
+            )
+            return True
+        except Exception as e:
+            logger.error(f"更新翻译历史失败: {e}")
+            return False
         
     def get_combine_document(self, metadata) -> str:
-        """获取组合后的文档字符串"""
-        source = metadata.get('source', '')
-        target = metadata.get('target', '')
+        """获取组合后的文档字符串，包含关键搜索字段"""
+        file_name = metadata.get('file_name', '')
+        original_text = metadata.get('original_text', '')
+        translation = metadata.get('translation', '')
+        approved_text = metadata.get('approved_text', '')
         context = metadata.get('context', '')
-        file_path = metadata.get('file_path', '')
         
-        return f"SOURCE:{source} TARGET:{target} CONTEXT:{context} FILE:{file_path}"
+        # 组合关键搜索字段，使用标识符分隔
+        return f"FILE:{file_name} ORIGINAL:{original_text} TRANSLATION:{translation} APPROVED:{approved_text} CONTEXT:{context}"
         
-    def get_exact_translation(self, config_name: str, source_text: str):
-        """获取精确匹配的翻译"""
+    def get_exact_translation(self, config_name: str, source_text: str = "", translation_key: str = "") -> Optional[TranslationObject]:
+        """获取精确匹配的翻译，返回完整的TranslationObject
+        
+        Args:
+            config_name: 配置名称
+            source_text: 原文文本（可选）
+            translation_key: 翻译的唯一标识（可选）
+        
+        Returns:
+            匹配的TranslationObject，如果没有找到则返回None
+        """
         try:
             collection = self.get_translation_collection(config_name)
             
-            # 使用安全的where查询，支持特殊字符转义
-            source_text = self.escape_text(source_text)
-            results = collection.get(where={"source": source_text})
+            # 优先使用translation_key查询
+            if translation_key:
+                results = collection.get(ids=[translation_key])
+            elif source_text:
+                # 使用原文查询
+                escaped_source_text = self.escape_text(source_text)
+                results = collection.get(where={"original_text": escaped_source_text})
+            else:
+                return None
             
             if results['metadatas']:
-                return results['metadatas'][0]
+                metadata = results['metadatas'][0]
+                
+                # 从metadata构造TranslationObject
+                translation_obj = TranslationObject(
+                    file_name=metadata.get('file_name', ''),
+                    original_text=metadata.get('original_text', ''),
+                    process_text=metadata.get('process_text', ''),
+                    translation=metadata.get('translation', ''),
+                    context=metadata.get('context', ''),
+                    dangerous=metadata.get('dangerous', False),
+                    is_translated=metadata.get('is_translated', False),
+                    is_suggested_to_translate=metadata.get('is_suggested_to_translate', True),
+                    llm_reason=metadata.get('llm_reason', ''),
+                    translation_key=metadata.get('translation_key', ''),
+                    approved=metadata.get('approved', False),
+                    approved_text=metadata.get('approved_text', '')
+                )
+                
+                return translation_obj
             return None
         except Exception as e:
             logger.error(f"获取精确翻译失败: {e}")
             return None
     
+    def get_translation_by_key(self, config_name: str, translation_key: str) -> Optional[TranslationObject]:
+        """根据translation_key获取翻译对象
+        
+        Args:
+            config_name: 配置名称
+            translation_key: 翻译的唯一标识
+        
+        Returns:
+            匹配的TranslationObject，如果没有找到则返回None
+        """
+        return self.get_exact_translation(config_name, translation_key=translation_key)
+    
     def search_similar_translations(self, config_name: str, source_text: str, threshold: float, n_results: int = 3) -> List[Dict]:
-        """搜索相似的历史翻译"""
+        """搜索相似的历史翻译
+        
+        Args:
+            config_name: 配置名称
+            source_text: 原文文本
+            threshold: 相似度阈值
+            n_results: 返回结果数量
+        
+        Returns:
+            相似翻译记录列表，返回格式兼容旧版本调用方
+        """
         try:
             collection = self.get_translation_collection(config_name)
             source_text = self.escape_text(source_text)
+            
             try:
+                # 使用语义搜索查找相似的翻译记录
                 search_results = collection.query(
                     query_texts=[source_text],
                     n_results=n_results
@@ -542,18 +635,19 @@ class VectorTranslationMemory:
                     for distance, metadata in zip(search_results['distances'][0], search_results['metadatas'][0]):
                         similarity = 1 - distance
                         if similarity > threshold:  # 相似度阈值
+                            # 返回简化的结果，只包含语义搜索相关信息
                             similar_translations.append({
                                 'type': 'similar',
-                                'source': metadata['source'],
-                                'target': metadata['target'],
-                                'context': metadata['context'],
-                                'file_path': metadata['file_path'],
+                                'source': metadata.get('original_text', ''),
                                 'similarity': similarity,
-                                'created_at': metadata['created_at']
+                                'translation_key': metadata.get('translation_key', ''),
+                                'created_at': metadata.get('created_at', '')
                             })
                 
                 return similar_translations
+                
             except Exception as e:
+                logger.error(traceback.format_exc())
                 logger.error(f"语义搜索翻译历史失败: {e}")
             
             return []
@@ -561,21 +655,148 @@ class VectorTranslationMemory:
             logger.error(f"搜索相似翻译失败: {e}")
             return []
     
-    def fuzzy_search_translations(self, config_name: str, search_text: str):
-        """模糊搜索翻译历史（类似 MySQL 的 %s% 搜索）
+    def efficient_search_translations(self, config_name: str, search_params: Dict) -> List[Dict]:
+        """高效搜索翻译记录，结合where_document和metadata精确匹配
         
         Args:
             config_name: 配置名称
-            search_text: 搜索文本
+            search_params: 搜索参数，支持：
+                - file_name: 文件名模糊匹配
+                - original_text: 原文模糊匹配
+                - translation: 译文模糊匹配
+                - approved_text: 审核文本模糊匹配
+                - context: 上下文模糊匹配
+                - approved: 审核状态（True/False/None）
         
         Returns:
             匹配的翻译记录列表
         """
-        collection = self.get_translation_collection(config_name)
-        search_results = collection.get(
-                                where_document={"$contains": search_text}
-                            )
-        return search_results
+        try:
+            collection = self.get_translation_collection(config_name)
+            
+            # 第一步：收集所有可能的候选记录
+            candidate_ids = set()
+            
+            # 对于original_text字段，可以直接使用document搜索（因为document就是original_text）
+            if search_params.get('original_text'):
+                try:
+                    field_results = collection.get(where_document={"$contains": str(search_params['original_text'])})
+                    if field_results['ids']:
+                        candidate_ids.update(field_results['ids'])
+                except Exception as e:
+                    logger.warning(f"原文搜索失败: {e}")
+            
+            # 对于其他字段，使用metadata精确搜索
+            for field, search_value in search_params.items():
+                if field == 'approved' or field == 'original_text' or not search_value:
+                    continue  # 跳过已处理的字段和空值
+                
+                try:
+                    # 对于非原文字段，需要获取所有记录进行字段匹配
+                    # 这里可以优化：如果没有其他搜索条件，直接跳过
+                    pass
+                except Exception as e:
+                    logger.warning(f"字段 {field} 搜索失败: {e}")
+                    continue
+            
+            # 如果没有文本搜索条件，获取所有记录进行metadata过滤
+            if not candidate_ids:
+                if 'approved' in search_params and search_params['approved'] is not None:
+                    try:
+                        # 只有审核状态查询
+                        results = collection.get(where={'approved': search_params['approved']})
+                        if results['ids']:
+                            candidate_ids.update(results['ids'])
+                    except Exception:
+                        # 如果where查询失败，获取所有记录
+                        results = collection.get()
+                        if results['ids']:
+                            candidate_ids.update(results['ids'])
+                else:
+                    # 如果有非原文的字段搜索，需要获取所有记录进行过滤
+                    has_other_fields = any(field not in ['original_text', 'approved'] and search_value 
+                                         for field, search_value in search_params.items())
+                    if has_other_fields:
+                        results = collection.get()
+                        if results['ids']:
+                            candidate_ids.update(results['ids'])
+                    else:
+                        return []
+            
+            if not candidate_ids:
+                return []
+            
+            # 第二步：获取候选记录的详细信息
+            candidate_results = collection.get(ids=list(candidate_ids))
+            
+            if not candidate_results['metadatas']:
+                return []
+            
+            # 第三步：在内存中进行精确的字段匹配
+            matched_records = []
+            
+            for i, metadata in enumerate(candidate_results['metadatas']):
+                is_match = True
+                
+                # 检查每个搜索条件
+                for field, search_value in search_params.items():
+                    if not search_value and search_value != False:  # 允许 False 值
+                        continue  # 跳过空条件
+                    
+                    field_value = metadata.get(field, '')
+                    
+                    if field == 'approved':
+                        # 布尔字段精确匹配
+                        if metadata.get('approved', False) != search_value:
+                            is_match = False
+                            break
+                    else:
+                        # 字符串字段模糊匹配（不区分大小写）
+                        if isinstance(field_value, str) and isinstance(search_value, str):
+                            if search_value.lower() not in field_value.lower():
+                                is_match = False
+                                break
+                        else:
+                            # 非字符串字段转换为字符串后匹配
+                            if str(search_value).lower() not in str(field_value).lower():
+                                is_match = False
+                                break
+                
+                if is_match:
+                    # 构造结果记录
+                    record = {
+                        'metadata': metadata,
+                        'document': candidate_results['documents'][i] if i < len(candidate_results['documents']) else '',
+                        'translation_obj': self._metadata_to_translation_obj(metadata)
+                    }
+                    matched_records.append(record)
+            
+            # 按更新时间降序排序
+            matched_records.sort(key=lambda x: x['metadata'].get('updated_at', ''), reverse=True)
+            
+            return matched_records
+            
+        except Exception as e:
+            logger.error(f"高效搜索翻译记录失败: {e}")
+            return []
+       
+
+    def _metadata_to_translation_obj(self, metadata) -> TranslationObject:
+        """将metadata转换为TranslationObject"""
+        return TranslationObject(
+            file_name=metadata.get('file_name', ''),
+            original_text=metadata.get('original_text', ''),
+            process_text=metadata.get('process_text', ''),
+            translation=metadata.get('translation', ''),
+            context=metadata.get('context', ''),
+            dangerous=metadata.get('dangerous', False),
+            is_translated=metadata.get('is_translated', False),
+            is_suggested_to_translate=metadata.get('is_suggested_to_translate', True),
+            llm_reason=metadata.get('llm_reason', ''),
+            translation_key=metadata.get('translation_key', ''),
+            approved=metadata.get('approved', False),
+            approved_text=metadata.get('approved_text', '')
+        )
 
     
     def get_terminology_list(self) -> List[Dict]:
@@ -613,51 +834,52 @@ class VectorTranslationMemory:
             logger.error(f"删除专有名词失败: {e}")
             return False
     
-    def analyze_high_frequency_words(self, translations: List[str], min_frequency: int = 2) -> List[Dict]:
-        """分析文本列表中的高频词，作为潜在专有名词建议"""
+    def delete_translation_history(self, config_name: str, translation_key: str) -> bool:
+        """删除翻译历史记录"""
         try:
-            if not translations:
-                return []
-            
-            # 合并所有文本
-            all_text = " ".join(translations)
-            
-            # 提取英文单词
-            words = re.findall(r'\b[A-Za-z]+(?:\s+[A-Za-z]+)*\b', all_text)
-            word_freq = Counter(words)
-            
-            # 过滤高频词
-            high_freq_words = []
-            existing_terms = {term['term'].lower() for term in self.get_terminology_list()}
-            
-            # 常见停用词
-            stop_words = {
-                'the', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'of', 'with', 'by',
-                'is', 'are', 'was', 'were', 'be', 'been', 'have', 'has', 'had', 'do', 'does',
-                'did', 'will', 'would', 'could', 'should', 'this', 'that', 'these', 'those'
-            }
-            
-            for word, freq in word_freq.most_common():
-                word_clean = word.strip()
-                if (freq >= min_frequency and 
-                    len(word_clean) > 2 and  # 过滤过短的词
-                    word_clean.lower() not in existing_terms and  # 不在现有专有名词中
-                    word_clean.lower() not in stop_words):  # 过滤常见停用词
-                    
-                    # 检查是否已存在于专有名词库
-                    exists_in_terminology = word_clean.lower() in existing_terms
-                    
-                    high_freq_words.append({
-                        'word': word_clean,
-                        'frequency': freq,
-                        'exists_in_terminology': exists_in_terminology,
-                        'suggested_chinese': '' if not exists_in_terminology else self._get_term_translation(word_clean)
-                    })
-            
-            return high_freq_words[:20]  # 返回前20个建议
+            collection = self.get_translation_collection(config_name)
+            collection.delete(ids=[translation_key])
+            return True
         except Exception as e:
-            logger.error(f"分析高频词失败: {e}")
-            return []
+            logger.error(f"删除翻译历史失败 {translation_key}: {e}")
+            return False
+    
+    def delete_translation_batch(self, config_name: str, translation_keys: List[str]) -> Tuple[int, int]:
+        """批量删除翻译历史记录
+        
+        Args:
+            config_name: 配置名称
+            translation_keys: 要删除的翻译记录键列表
+        
+        Returns:
+            Tuple[成功删除数量, 失败数量]
+        """
+        success_count = 0
+        error_count = 0
+        
+        try:
+            collection = self.get_translation_collection(config_name)
+            
+            # ChromaDB 支持批量删除
+            try:
+                collection.delete(ids=translation_keys)
+                success_count = len(translation_keys)
+            except Exception as e:
+                logger.error(f"批量删除失败，尝试逐个删除: {e}")
+                # 如果批量删除失败，逐个删除
+                for translation_key in translation_keys:
+                    try:
+                        collection.delete(ids=[translation_key])
+                        success_count += 1
+                    except Exception as single_error:
+                        logger.error(f"删除单个翻译记录失败 {translation_key}: {single_error}")
+                        error_count += 1
+                        
+        except Exception as e:
+            logger.error(f"删除翻译记录失败: {e}")
+            error_count = len(translation_keys)
+        
+        return success_count, error_count
         
     def escape_text(self, text: str) -> str:
         """转义文本中的特殊字符"""
@@ -667,102 +889,81 @@ class VectorTranslationMemory:
         escaped_text = text.replace("'", "").replace('"', '')
         return escaped_text
     
-    def _get_term_translation(self, term: str) -> str:
-        """获取专有名词的翻译"""
+    def update_history_translation_batch(self, config_name: str, translation_objects: List[TranslationObject]) -> Tuple[int, int]:
+        """批量更新翻译历史记录
+        
+        Args:
+            config_name: 配置名称
+            translation_objects: 要更新的翻译对象列表
+        
+        Returns:
+            Tuple[成功数量, 失败数量]
+        """
+        if not translation_objects:
+            return 0, 0
+        
+        success_count = 0
+        error_count = 0
+        
         try:
-            term_list = self.get_terminology_list()
-            for term_info in term_list:
-                if term_info['term'].lower() == term.lower():
-                    return term_info['translation']
-            return ''
-        except:
-            return ''
-    
-    def get_statistics(self, config_name: str = "") -> Dict:
-        """获取统计信息"""
-        try:
-            stats = {
-                'terminology_count': 0,
-                'translation_history_count': 0,
-                'config_collections': []
-            }
+            collection = self.get_translation_collection(config_name)
             
-            # 专有名词统计
-            terminology_results = self.terminology_collection.get()
-            if terminology_results['metadatas']:
-                stats['terminology_count'] = len(terminology_results['metadatas'])
+            # 准备批量数据
+            ids = []
+            documents = []
+            metadatas = []
             
-            # 翻译历史统计
-            if config_name:
-                collection = self.get_translation_collection(config_name)
-                translation_results = collection.get()
-                if translation_results['metadatas']:
-                    stats['translation_history_count'] = len(translation_results['metadatas'])
-            else:
-                # 统计所有配置的翻译历史
-                for collection_name in self.translation_collections:
-                    collection = self.translation_collections[collection_name]
-                    translation_results = collection.get()
-                    count = len(translation_results['metadatas']) if translation_results['metadatas'] else 0
-                    stats['config_collections'].append({
-                        'config_name': collection_name,
-                        'translation_count': count
+            for translation_obj in translation_objects:
+                try:
+                    translation_key = translation_obj.translation_key
+                    if not translation_key:
+                        logger.warning("翻译对象缺少 translation_key，跳过")
+                        error_count += 1
+                        continue
+                    
+                    # 准备文档数据（只存储用于语义搜索的字段）
+                    original_text = self.escape_text(translation_obj.original_text)
+                    
+                    ids.append(translation_key)
+                    documents.append(original_text)
+                    metadatas.append({
+                        'translation_key': translation_key,
+                        'config_name': config_name,
+                        'created_at': datetime.now().isoformat(),
+                        'type': 'translation'
                     })
+                    
+                except Exception as prepare_error:
+                    logger.error(f"准备批量更新数据失败: {str(prepare_error)}")
+                    error_count += 1
+                    continue
             
-            return stats
+            if ids:
+                try:
+                    # 使用 upsert 进行批量插入/更新
+                    collection.upsert(
+                        ids=ids,
+                        documents=documents,
+                        metadatas=metadatas
+                    )
+                    success_count = len(ids)
+                    logger.info(f"批量更新向量数据库完成: 成功 {success_count} 条记录")
+                    
+                except Exception as upsert_error:
+                    logger.error(f"向量数据库批量 upsert 失败: {str(upsert_error)}")
+                    # 如果批量操作失败，尝试逐个更新
+                    for i, translation_obj in enumerate(translation_objects[:len(ids)]):
+                        try:
+                            if self.update_history_translation(config_name, translation_obj.translation_key, translation_obj):
+                                success_count += 1
+                            else:
+                                error_count += 1
+                        except Exception:
+                            error_count += 1
+                            
         except Exception as e:
-            logger.error(f"获取统计信息失败: {e}")
-            return {}
+            logger.error(f"批量更新翻译历史失败: {e}")
+            error_count = len(translation_objects)
+        
+        return success_count, error_count
     
-    def export_data(self, output_path: str, config_name: str = ""):
-        """导出数据"""
-        try:
-            export_data = {
-                'exported_at': datetime.now().isoformat(),
-                'terminology': [],
-                'translations': {}
-            }
-            
-            # 导出专有名词
-            terminology_list = self.get_terminology_list()
-            export_data['terminology'] = terminology_list
-            
-            # 导出翻译历史
-            if config_name:
-                collection = self.get_translation_collection(config_name)
-                translation_results = collection.get()
-                if translation_results['metadatas']:
-                    export_data['translations'][config_name] = [
-                        {
-                            'source': metadata['source'],
-                            'target': metadata['target'],
-                            'context': metadata['context'],
-                            'file_path': metadata['file_path'],
-                            'created_at': metadata['created_at']
-                        }
-                        for metadata in translation_results['metadatas']
-                    ]
-            else:
-                # 导出所有配置的翻译历史
-                for collection_name in self.translation_collections:
-                    collection = self.translation_collections[collection_name]
-                    translation_results = collection.get()
-                    if translation_results['metadatas']:
-                        export_data['translations'][collection_name] = [
-                            {
-                                'source': metadata['source'],
-                                'target': metadata['target'],
-                                'context': metadata['context'],
-                                'file_path': metadata['file_path'],
-                                'created_at': metadata['created_at']
-                            }
-                            for metadata in translation_results['metadatas']
-                        ]
-            
-            with open(output_path, 'w', encoding='utf-8') as f:
-                json.dump(export_data, f, ensure_ascii=False, indent=2)
-            
-            return True
-        except Exception as e:
-            logger.error(f"导出数据失败: {e}")
-            return False

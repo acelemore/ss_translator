@@ -30,21 +30,69 @@
 
         <!-- 搜索栏 -->
         <div class="search-section">
-          <el-input
-            v-model="searchQuery"
-            placeholder="搜索原文、译文或文件路径..."
-            style="width: 400px;"
-            clearable
-            @input="handleSearch"
-          >
-            <template #prefix>
-              <el-icon><Search /></el-icon>
+          <el-card class="search-card">
+            <template #header>
+              <div class="search-header">
+                <span>🔍 搜索条件</span>
+                <el-button 
+                  type="text" 
+                  @click="clearSearch"
+                  :disabled="!hasSearchConditions"
+                >
+                  清空条件
+                </el-button>
+              </div>
             </template>
-          </el-input>
-          <el-button @click="refreshData" :loading="loading">
-            <el-icon><Refresh /></el-icon>
-            刷新
-          </el-button>
+            
+            <div class="search-fields">
+              <div class="search-field">
+                <label>文件名:</label>
+                <el-input
+                  v-model="searchParams.file_name"
+                  placeholder="搜索文件名..."
+                  clearable
+                  @input="handleSearch"
+                />
+              </div>
+              
+              <div class="search-field">
+                <label>原文:</label>
+                <el-input
+                  v-model="searchParams.original_text"
+                  placeholder="搜索原文..."
+                  clearable
+                  @input="handleSearch"
+                />
+              </div>
+              
+              <div class="search-field">
+                <label>审核文本:</label>
+                <el-input
+                  v-model="searchParams.approved_text"
+                  placeholder="搜索审核文本..."
+                  clearable
+                  @input="handleSearch"
+                />
+              </div>
+              
+              <div class="search-field">
+                <label>上下文:</label>
+                <el-input
+                  v-model="searchParams.context"
+                  placeholder="搜索上下文..."
+                  clearable
+                  @input="handleSearch"
+                />
+              </div>
+            </div>
+            
+            <div class="search-actions">
+              <el-button @click="refreshData" :loading="loading">
+                <el-icon><Refresh /></el-icon>
+                刷新
+              </el-button>
+            </div>
+          </el-card>
         </div>
 
         <!-- 批量操作栏 -->
@@ -79,46 +127,35 @@
           <el-table-column 
             type="selection" 
             width="55"
-            :selectable="row => editingId !== row.id"
           />
-          <el-table-column prop="source" label="原文" min-width="300" show-overflow-tooltip />
-          <el-table-column prop="target" label="译文" min-width="300" show-overflow-tooltip>
+          <el-table-column prop="file_name" label="文件名" min-width="200" show-overflow-tooltip>
             <template #default="scope">
-              <div v-if="editingId === scope.row.id" class="edit-cell">
-                <el-input
-                  v-model="editingText"
-                  type="textarea"
-                  :rows="2"
-                  @keyup.enter.ctrl="confirmEdit"
-                />
-                <div class="edit-actions">
-                  <el-button size="small" type="primary" @click="confirmEdit" :loading="updating">
-                    确定
-                  </el-button>
-                  <el-button size="small" @click="cancelEdit">
-                    取消
-                  </el-button>
-                </div>
-              </div>
-              <div v-else>{{ scope.row.target }}</div>
-            </template>
-          </el-table-column>
-          <el-table-column prop="file_path" label="文件路径" min-width="200" show-overflow-tooltip>
-            <template #default="scope">
-              <span v-if="scope.row.file_path" class="file-path">{{ scope.row.file_path }}</span>
+              <span v-if="scope.row.file_name" class="file-path">{{ scope.row.file_name }}</span>
               <span v-else class="empty-value">-</span>
             </template>
           </el-table-column>
-          <el-table-column label="操作" width="150" fixed="right">
+          <el-table-column prop="original_text" label="原文" min-width="300" show-overflow-tooltip />
+          <el-table-column label="是否已审核" width="120" align="center">
             <template #default="scope">
-              <el-button 
-                v-if="editingId !== scope.row.id"
-                size="small" 
-                type="primary" 
-                @click="startEdit(scope.row)"
-              >
-                编辑
-              </el-button>
+              <el-tag :type="scope.row.approved ? 'success' : 'info'" size="small">
+                {{ scope.row.approved ? '已审核' : '未审核' }}
+              </el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column prop="approved_text" label="审核后文本" min-width="300" show-overflow-tooltip>
+            <template #default="scope">
+              <span v-if="scope.row.approved_text" class="approved-text">{{ scope.row.approved_text }}</span>
+              <span v-else class="empty-value">-</span>
+            </template>
+          </el-table-column>
+          <el-table-column prop="context" label="上下文" min-width="200" show-overflow-tooltip>
+            <template #default="scope">
+              <span v-if="scope.row.context" class="context-text">{{ scope.row.context }}</span>
+              <span v-else class="empty-value">-</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="操作" width="100" fixed="right">
+            <template #default="scope">
               <el-button 
                 size="small" 
                 type="danger" 
@@ -175,13 +212,17 @@ const appStore = useAppStore()
 
 // 数据
 const loading = ref(false)
-const updating = ref(false)
 const deleting = ref(null)
 const batchDeleting = ref(false)
 
 // 翻译记录数据
 const translations = ref([])
-const searchQuery = ref('')
+const searchParams = ref({
+  file_name: '',
+  original_text: '',
+  approved_text: '',
+  context: ''
+})
 const currentPage = ref(1)
 const pageSize = ref(20)
 const totalCount = ref(0)
@@ -190,10 +231,6 @@ const totalCount = ref(0)
 const stats = ref({
   total_count: 0
 })
-
-// 编辑状态
-const editingId = ref(null)
-const editingText = ref('')
 
 // 批量选择状态
 const selectedRows = ref([])
@@ -207,6 +244,10 @@ const isAllSelected = computed(() => {
   return translations.value.length > 0 && selectedRows.value.length === translations.value.length
 })
 
+const hasSearchConditions = computed(() => {
+  return Object.values(searchParams.value).some(value => value.trim())
+})
+
 // 方法
 const loadData = async () => {
   loading.value = true
@@ -215,7 +256,7 @@ const loadData = async () => {
     const result = await memoryAPI.getTranslations(
       currentPage.value, 
       pageSize.value, 
-      searchQuery.value
+      searchParams.value
     )
     
     if (result.success) {
@@ -243,6 +284,17 @@ const refreshData = () => {
   loadData()
 }
 
+const clearSearch = () => {
+  searchParams.value = {
+    file_name: '',
+    original_text: '',
+    approved_text: '',
+    context: ''
+  }
+  currentPage.value = 1
+  loadData()
+}
+
 const handleSearch = () => {
   // 搜索防抖
   if (searchTimeout) {
@@ -265,47 +317,6 @@ const handleSizeChange = (size) => {
   currentPage.value = 1
   clearSelection() // 清空当前选择
   loadData()
-}
-
-const startEdit = (row) => {
-  editingId.value = row.id
-  editingText.value = row.target
-}
-
-const cancelEdit = () => {
-  editingId.value = null
-  editingText.value = ''
-}
-
-const confirmEdit = async () => {
-  if (!editingText.value.trim()) {
-    ElMessage.warning('译文不能为空')
-    return
-  }
-  
-  try {
-    updating.value = true
-    const result = await memoryAPI.updateTranslation(editingId.value, {
-      target: editingText.value.trim()
-    })
-    
-    if (result.success) {
-      ElMessage.success('更新成功')
-      // 更新本地数据
-      const index = translations.value.findIndex(t => t.id === editingId.value)
-      if (index !== -1) {
-        translations.value[index].target = editingText.value.trim()
-      }
-      cancelEdit()
-    } else {
-      ElMessage.error(result.message || '更新失败')
-    }
-  } catch (error) {
-    console.error('更新翻译失败:', error)
-    ElMessage.error('更新翻译失败')
-  } finally {
-    updating.value = false
-  }
 }
 
 const deleteTranslation = async (row) => {
@@ -345,9 +356,7 @@ const selectAll = () => {
   nextTick(() => {
     if (tableRef.value) {
       translations.value.forEach(row => {
-        if (editingId.value !== row.id) {
-          tableRef.value.toggleRowSelection(row, true)
-        }
+        tableRef.value.toggleRowSelection(row, true)
       })
     }
   })
@@ -496,10 +505,45 @@ onMounted(() => {
 }
 
 .search-section {
-  display: flex;
-  align-items: center;
-  gap: 12px;
   margin-bottom: 20px;
+}
+
+.search-card .search-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.search-card .search-fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.search-field label {
+  display: block;
+  margin-bottom: 4px;
+  font-size: 14px;
+  color: var(--el-text-color-regular);
+  font-weight: 500;
+}
+
+.search-card .search-actions {
+  display: flex;
+  justify-content: flex-end;
+  border-top: 1px solid var(--el-border-color-lighter);
+  padding-top: 16px;
+}
+
+.approved-text {
+  color: var(--el-color-success);
+  font-weight: 500;
+}
+
+.context-text {
+  color: var(--el-color-info);
+  font-style: italic;
 }
 
 .batch-actions {
@@ -519,16 +563,6 @@ onMounted(() => {
 }
 
 .action-buttons {
-  display: flex;
-  gap: 8px;
-}
-
-.edit-cell {
-  width: 100%;
-}
-
-.edit-actions {
-  margin-top: 8px;
   display: flex;
   gap: 8px;
 }

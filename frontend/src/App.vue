@@ -47,7 +47,7 @@
       <!-- 底部信息 -->
       <div class="sidebar-footer">
         <div class="app-info">
-          <div class="version">v1.0.0</div>
+          <div class="version">v1.2.0</div>
           <div class="author">Developed by Acelemore</div>
         </div>
       </div>

@@ -21,10 +21,14 @@ along with ss_translator.  If not, see <https://www.gnu.org/licenses/>.
 集中管理所有跨模块共享的变量和状态
 """
 from vector_translation_memory import VectorTranslationMemory
+from db_interface import DatabaseInterface
 from improved_translator import ImprovedTranslator
 
-# 向量数据库实例
-vdb = VectorTranslationMemory()
+# 数据库操作统一接口（主要接口）
+db = DatabaseInterface()
+
+# 向量数据库实例（保留兼容性）
+vdb = db.vector_memory
 
 # 当前选择的配置名称
 current_config_name = None

@@ -35,13 +35,6 @@
           <el-col :span="12" v-if="currentConfig">
             <el-space>
               <el-button 
-                type="warning" 
-                @click="autoConfigHandler"
-                :loading="autoConfigLoading"
-              >
-                自动配置
-              </el-button>
-              <el-button 
                 type="info" 
                 @click="exportConfigHandler" 
                 :loading="exportConfigLoading"
@@ -110,13 +103,22 @@
       <template #header>
         <div style="display: flex; justify-content: space-between; align-items: center;">
           <span>📝 编辑配置文件</span>
-          <el-button 
-            type="primary" 
-            @click="saveConfigContentHandler"
-            :loading="saveConfigContentLoading"
-          >
-            保存配置
-          </el-button>
+          <el-space>
+            <el-button 
+              type="warning" 
+              @click="autoConfigHandler"
+              :loading="autoConfigLoading"
+            >
+              自动配置
+            </el-button>
+            <el-button 
+              type="primary" 
+              @click="saveConfigContentHandler"
+              :loading="saveConfigContentLoading"
+            >
+              保存配置
+            </el-button>
+          </el-space>
         </div>
       </template>
       

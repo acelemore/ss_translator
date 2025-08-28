@@ -35,6 +35,8 @@ translation_work/
 # 向量数据库
 vector_memory/
 models/
+mods/
+hybrid_memory/
 
 # 临时文件
 *.tmp

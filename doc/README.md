@@ -20,6 +20,9 @@
 3. 安装依赖：
    ```bash
    pip install -r requirements.txt
+   # 安装npm依赖
+   cd frontend && npm install && cd ..
+   cd translate_helper && cd js && npm install && cd .. && cd ..
    ```
 4. 构建前端:
    ```bash

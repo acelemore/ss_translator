@@ -62,8 +62,8 @@ class ImprovedTranslator:
         
         self.work_dir, self.mod_path, self.mod_work_dir = TranslateHelper.init_workspace(self.config)
         
-        # 初始化向量翻译记忆库
-        self.vector_memory = global_values.vdb
+        # 初始化数据库接口
+        self.db_interface = global_values.db
         
         # 设置日志
         self._setup_logging()
@@ -140,16 +140,32 @@ class ImprovedTranslator:
         
         processed_text, placeholders_map = self.process_text_placeholder(translation_obj.original_text)
         # 检查是否有完全匹配的翻译记忆
-        if self.vector_memory:
-            exact_match = self.vector_memory.get_exact_translation(self.config_name, processed_text)
-            if exact_match:
-                self.logger.info(f"找到完全匹配的翻译记忆: {processed_text}, {exact_match['target']}")
-                tt = self.validate_placeholders_and_parse(exact_match['target'], placeholders_map)
+        if self.db_interface:
+            # 优先使用translation_key查询
+            exact_match_obj = None
+            if translation_obj.translation_key:
+                exact_match_obj = self.db_interface.get_exact_translation(self.config_name, translation_key=translation_obj.translation_key)
+            
+            # 如果没有通过translation_key找到，再用原文查询
+            if not exact_match_obj:
+                exact_match_obj = self.db_interface.get_exact_translation(self.config_name, source_text=processed_text)
+            if exact_match_obj:
+                self.logger.info(f"找到完全匹配的翻译记忆: {processed_text}, {exact_match_obj.translation}")
+                tt = self.validate_placeholders_and_parse(exact_match_obj.translation, placeholders_map)
                 tt = tt.replace("”", "\"").replace("’", "\'").replace("“", "\"").replace("‘", "\'").replace(",", "，")  # 替换引号
                 translation_obj.translation = tt
                 translation_obj.is_translated = True
-                translation_obj.is_suggested_to_translate = True
-                translation_obj.llm_reason = exact_match.get('llm_reason', "使用翻译记忆库的完全匹配")
+                translation_obj.is_suggested_to_translate = exact_match_obj.is_suggested_to_translate
+                translation_obj.llm_reason = exact_match_obj.llm_reason or "使用翻译记忆库的完全匹配"
+                # 保留审核信息
+                translation_obj.approved = exact_match_obj.approved
+                translation_obj.approved_text = exact_match_obj.approved_text
+                # translation_obj.translation_key = exact_match_obj.translation_key
+                save_obj = translation_obj.copy()
+                translation_id = self.db_interface.add_translation_history(
+                    self.config_name,
+                    save_obj
+                )
                 return translation_obj
         
         # 处理占位符
@@ -173,15 +189,15 @@ class ImprovedTranslator:
         
         # 搜索相似的历史翻译
         similar_translations = []
-        if self.vector_memory:
-            similar_translations = self.vector_memory.search_similar_translations(
+        if self.db_interface:
+            similar_translations = self.db_interface.search_similar_translations(
                 self.config_name, translation_obj.original_text, n_results=3, threshold=0.7
             )
-        
+        self.logger.info(f"找到以下相似翻译: {similar_translations}")
         # 搜索文本中的专有名词
         found_terms = []
-        if self.vector_memory:
-            found_terms = self.vector_memory.search_terminology(translation_obj.original_text)
+        if self.db_interface:
+            found_terms = self.db_interface.search_terminology(translation_obj.original_text)
         
         self.logger.info(f"找到以下专有名词: {found_terms}")
         # 获取文件类型对应的helper
@@ -270,14 +286,14 @@ class ImprovedTranslator:
                 translation_obj.llm_reason = reason
                 
                 # 如果翻译成功，保存到翻译记忆库
-                if translation and self.vector_memory and should_translate:
-                    self.vector_memory.add_translation_history(
+                if translation and self.db_interface and translation_obj.is_translated:
+                    # 创建用于保存的翻译对象副本
+                    save_obj = translation_obj.copy()
+                    save_obj.process_text = processed_text
+                    save_obj.translation = org_translation
+                    translation_id = self.db_interface.add_translation_history(
                         self.config_name,
-                        processed_text,
-                        org_translation,
-                        translation_obj.context,
-                        translation_obj.llm_reason,
-                        translation_obj.file_name
+                        save_obj
                     )
                 
                 self.logger.info(f"翻译完成: {translation_obj.original_text[:50]}...")

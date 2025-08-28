@@ -167,15 +167,20 @@ export const terminologyAPI = {
 // 翻译记忆库相关API
 export const memoryAPI = {
   // 获取翻译记忆列表（分页）
-  getTranslations: (page = 1, pageSize = 20, search = '') => api.get('/memory/translations', {
-    params: { page, page_size: pageSize, search }
-  }),
+  getTranslations: (page = 1, pageSize = 20, searchParams = {}) => {
+    const params = { page, page_size: pageSize }
+    
+    // 添加搜索参数
+    if (searchParams.file_name) params.search_file_name = searchParams.file_name
+    if (searchParams.original_text) params.search_original_text = searchParams.original_text
+    if (searchParams.approved_text) params.search_approved_text = searchParams.approved_text
+    if (searchParams.context) params.search_context = searchParams.context
+    
+    return api.get('/memory/translations', { params })
+  },
   
   // 获取统计信息
   getStats: () => api.get('/memory/translations/stats'),
-  
-  // 更新翻译记录
-  updateTranslation: (id, data) => api.put(`/memory/translations/${id}`, data),
   
   // 删除翻译记录
   deleteTranslation: (id) => api.delete(`/memory/translations/${id}`),

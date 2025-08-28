@@ -71,7 +71,7 @@ def ensure_working_directories():
     # 创建必要的目录
     directories = [
         'translation_work',
-        'vector_memory',
+        'hybrid_memory',
         'configs'
     ]
     

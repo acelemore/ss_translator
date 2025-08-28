@@ -216,7 +216,10 @@ class TranslateHelper(object):
             user_prompt_parts.append("【相似翻译示例】")
             for example in similar_translations[:3]:  # 限制为3个示例
                 user_prompt_parts.append(f"原文: {example['source']}")
-                user_prompt_parts.append(f"译文: {example['target']}")
+                target = example.get("target", "")
+                if "approved" in example and example["approved"] and example.get("approved_text"):
+                    target = example["approved_text"]
+                user_prompt_parts.append(f"译文: {target}")
                 user_prompt_parts.append("")
         
         # 添加要翻译的文本

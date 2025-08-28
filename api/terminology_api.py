@@ -28,14 +28,14 @@ import global_values
 
 terminology_bp = Blueprint('terminology', __name__)
 
-vector_memory = global_values.vdb
+db_interface = global_values.db
 
 
 @terminology_bp.route('/api/terminology')
 def api_terminology():
     """获取专有名词表"""
     
-    terms = vector_memory.get_terminology_list()
+    terms = db_interface.get_terminology_list()
     # 转换格式以兼容前端
     terminology_dict = {term['term']: term['translation'] for term in terms}
     return jsonify(terminology_dict)
@@ -44,7 +44,7 @@ def api_terminology():
 def api_terminology_list():
     """获取详细的专有名词列表"""
     
-    terms = vector_memory.get_terminology_list()
+    terms = db_interface.get_terminology_list()
     return jsonify({"success": True, "terms": terms})
 
 @terminology_bp.route('/api/terminology/add', methods=['POST'])
@@ -69,7 +69,7 @@ def api_add_terminology():
     if not term or not translation:
         return jsonify({"success": False, "message": "术语和翻译不能为空"})
     
-    success = vector_memory.add_terminology(term, translation, domain, notes)
+    success = db_interface.add_terminology(term, translation, domain, notes)
     return jsonify({
         "success": success,
         "message": "添加成功" if success else "添加失败"
@@ -87,46 +87,19 @@ def api_delete_terminology():
     if not term:
         term = data.get('term', '').strip()
     
-    success = vector_memory.delete_terminology(term)
+    success = db_interface.delete_terminology(term)
     return jsonify({
         "success": success,
         "message": "删除成功" if success else "删除失败"
     })
 
-@terminology_bp.route('/api/terminology/high-frequency')
-def api_high_frequency_words():
-    """获取高频词建议"""
-    
-    current_config_name = global_values.current_config_name
-    
-    if not (vector_memory and current_config_name):
-        return jsonify({"success": False, "message": "功能不可用或未选择配置"})
-    
-    try:
-        config_name = current_config_name.replace('.json', '')
-        
-        # 从翻译历史中获取所有源文本
-        collection = vector_memory.get_translation_collection(config_name)
-        results = collection.get()
-        
-        if not results['metadatas']:
-            return jsonify({"success": True, "words": []})
-        
-        # 提取所有源文本
-        source_texts = [metadata['source'] for metadata in results['metadatas']]
-        
-        # 分析高频词
-        high_freq_words = vector_memory.analyze_high_frequency_words(source_texts)
-        return jsonify({"success": True, "words": high_freq_words})
-    except Exception as e:
-        return jsonify({"success": False, "message": str(e)})
 
 @terminology_bp.route('/api/terminology/export')
 def api_export_terminology():
     """导出专有名词为JSON文件"""
     
     try:
-        terms = vector_memory.get_terminology_list()
+        terms = db_interface.get_terminology_list()
         
         # 转换为导出格式
         export_data = []
@@ -205,7 +178,7 @@ def api_import_terminology():
             return jsonify({"success": False, "message": "JSON文件格式错误，应为数组格式"})
         
         # 使用批量导入方法
-        success_count, error_count, error_messages = vector_memory.add_terminology_batch(import_data)
+        success_count, error_count, error_messages = db_interface.add_terminology_batch(import_data)
         
         # 返回导入结果
         message = f"导入完成：成功 {success_count} 条"
