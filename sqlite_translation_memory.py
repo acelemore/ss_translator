@@ -239,12 +239,81 @@ class SQLiteTranslationMemory:
             logger.error(f"删除专有名词失败: {e}")
             return False
     
+    def add_terminology_batch(self, terms_data: List[Dict]) -> Tuple[int, int]:
+        """批量添加专有名词
+        
+        Args:
+            terms_data: 专有名词数据列表，每个元素包含 term, translation, domain, notes
+        
+        Returns:
+            Tuple[成功数量, 失败数量]
+        """
+        if not terms_data:
+            return 0, 0
+        
+        try:
+            conn = sqlite3.connect(str(self.terminology_db_path), timeout=5.0)
+            conn.row_factory = sqlite3.Row
+            
+            # 配置并发访问模式
+            conn.execute('PRAGMA journal_mode=WAL')
+            conn.execute('PRAGMA synchronous=NORMAL')
+            
+            cursor = conn.cursor()
+            current_time = datetime.now().isoformat()
+            
+            # 准备批量插入的数据
+            batch_data = []
+            for term_data in terms_data:
+                try:
+                    data_tuple = (
+                        term_data.get('term', ''),
+                        term_data.get('translation', ''),
+                        term_data.get('domain', 'general'),
+                        term_data.get('notes', ''),
+                        current_time,  # created_at
+                        current_time   # updated_at
+                    )
+                    batch_data.append(data_tuple)
+                except Exception as prepare_error:
+                    logger.error(f"准备专有名词数据失败: {str(prepare_error)}")
+                    continue
+            
+            if batch_data:
+                # 使用 executemany 进行批量插入/更新
+                cursor.executemany('''
+                    INSERT OR REPLACE INTO terminology 
+                    (term, translation, domain, notes, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                ''', batch_data)
+                
+                success_count = len(batch_data)
+                error_count = len(terms_data) - success_count
+                
+                conn.commit()
+                conn.close()
+                
+                logger.info(f"批量添加专有名词完成: 成功 {success_count}, 失败 {error_count}")
+                return success_count, error_count
+            else:
+                conn.close()
+                return 0, len(terms_data)
+                
+        except Exception as e:
+            logger.error(f"批量添加专有名词失败: {e}")
+            return 0, len(terms_data)
+    
     # ===================== 翻译历史管理 =====================
     
-    def add_translation(self, config_name: str, translation_obj: TranslationObject) -> bool:
+    def add_translation(self, config_name: str, translation_obj: TranslationObject, db = None) -> bool:
         """添加翻译记录"""
-        try:
+        conn = None
+        if db:
+            conn = db
+        else:
             conn = self.get_translation_connection(config_name)
+        
+        try:
             cursor = conn.cursor()
             
             current_time = datetime.now().isoformat()
@@ -275,12 +344,14 @@ class SQLiteTranslationMemory:
             ))
             
             conn.commit()
-            conn.close()
+            if not db:
+                conn.close()
             return True
         except Exception as e:
             logger.error(f"添加翻译记录失败: {e}")
             try:
-                conn.close()
+                if not db:
+                    conn.close()
             except:
                 pass
             return False
@@ -334,11 +405,15 @@ class SQLiteTranslationMemory:
                     pass
             return False
     
-    def get_translation_by_key(self, config_name: str, translation_key: str) -> Optional[TranslationObject]:
+    def get_translation_by_key(self, config_name: str, translation_key: str, db = None) -> Optional[TranslationObject]:
         """根据translation_key获取翻译记录"""
         conn = None
-        try:
+        # 如果有外部传入的数据库连接, 则使用外部的
+        if db:
+            conn = db
+        else:
             conn = self.get_translation_connection(config_name)
+        try:
             cursor = conn.cursor()
             cursor.execute("SELECT * FROM translations WHERE translation_key = ?", (translation_key,))
             row = cursor.fetchone()
@@ -358,24 +433,30 @@ class SQLiteTranslationMemory:
                     approved=row['approved'],
                     approved_text=row['approved_text']
                 )
-                conn.close()
+                if not db:
+                    conn.close()
                 return result
-            conn.close()
+            if not db:
+                conn.close()
             return None
         except Exception as e:
             logger.error(f"获取翻译记录失败: {e}")
             if conn:
                 try:
-                    conn.close()
+                    if not db:
+                        conn.close()
                 except:
                     pass
             return None
     
-    def get_translation_by_original_text(self, config_name: str, original_text: str) -> Optional[TranslationObject]:
+    def get_translation_by_original_text(self, config_name: str, original_text: str, db = None) -> Optional[TranslationObject]:
         """根据原文精确查询翻译记录"""
         conn = None
-        try:
+        if db:
+            conn = db
+        else:
             conn = self.get_translation_connection(config_name)
+        try:
             cursor = conn.cursor()
             cursor.execute("SELECT * FROM translations WHERE original_text = ? LIMIT 1", (original_text,))
             row = cursor.fetchone()
@@ -395,15 +476,18 @@ class SQLiteTranslationMemory:
                     approved=row['approved'],
                     approved_text=row['approved_text']
                 )
-                conn.close()
+                if not db:
+                    conn.close()
                 return result
-            conn.close()
+            if not db:
+                conn.close()
             return None
         except Exception as e:
             logger.error(f"根据原文获取翻译记录失败: {e}")
             if conn:
                 try:
-                    conn.close()
+                    if not db:
+                        conn.close()
                 except:
                     pass
             return None

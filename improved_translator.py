@@ -26,6 +26,7 @@ import os
 import shutil
 import threading
 from pathlib import Path
+import time
 import traceback
 from typing import Dict, List, Any, Optional, Tuple
 from openai import OpenAI
@@ -131,7 +132,7 @@ class ImprovedTranslator:
         # 传递配置键而不是实际文件路径
         return helper.extract_translate_objects(file_path)
     
-    def translate_text(self, translation_obj: TranslationObject) -> TranslationObject:
+    def translate_text(self, translation_obj: TranslationObject, db = None) -> TranslationObject:
         """
         翻译单个文本对象
         """
@@ -143,29 +144,32 @@ class ImprovedTranslator:
         if self.db_interface:
             # 优先使用translation_key查询
             exact_match_obj = None
+            key_match = True
             if translation_obj.translation_key:
-                exact_match_obj = self.db_interface.get_exact_translation(self.config_name, translation_key=translation_obj.translation_key)
+                exact_match_obj = self.db_interface.get_exact_translation(self.config_name, translation_key=translation_obj.translation_key, db = db)
             
             # 如果没有通过translation_key找到，再用原文查询
             if not exact_match_obj:
-                exact_match_obj = self.db_interface.get_exact_translation(self.config_name, source_text=processed_text)
+                exact_match_obj = self.db_interface.get_exact_translation(self.config_name, source_text=translation_obj.original_text, db = db)
+                key_match = False
             if exact_match_obj:
-                self.logger.info(f"找到完全匹配的翻译记忆: {processed_text}, {exact_match_obj.translation}")
-                tt = self.validate_placeholders_and_parse(exact_match_obj.translation, placeholders_map)
-                tt = tt.replace("”", "\"").replace("’", "\'").replace("“", "\"").replace("‘", "\'").replace(",", "，")  # 替换引号
-                translation_obj.translation = tt
+                self.logger.info(f"找到完全匹配的翻译记忆: {translation_obj.original_text}, {exact_match_obj.translation}")
+                translation_obj.translation = exact_match_obj.translation
                 translation_obj.is_translated = True
-                translation_obj.is_suggested_to_translate = exact_match_obj.is_suggested_to_translate
-                translation_obj.llm_reason = exact_match_obj.llm_reason or "使用翻译记忆库的完全匹配"
-                # 保留审核信息
-                translation_obj.approved = exact_match_obj.approved
-                translation_obj.approved_text = exact_match_obj.approved_text
+                if key_match:
+                    translation_obj.is_suggested_to_translate = True if exact_match_obj.is_suggested_to_translate else False
+                    translation_obj.llm_reason = exact_match_obj.llm_reason or "使用翻译记忆库的完全匹配"
+                    # 保留审核信息
+                    translation_obj.approved = True if exact_match_obj.approved else False
+                    translation_obj.approved_text = exact_match_obj.approved_text
                 # translation_obj.translation_key = exact_match_obj.translation_key
-                save_obj = translation_obj.copy()
-                translation_id = self.db_interface.add_translation_history(
-                    self.config_name,
-                    save_obj
-                )
+                if not key_match:
+                    save_obj = translation_obj.copy()
+                    self.db_interface.add_translation_history(
+                        self.config_name,
+                        save_obj,
+                        db
+                    )
                 return translation_obj
         
         # 处理占位符
@@ -293,7 +297,8 @@ class ImprovedTranslator:
                     save_obj.translation = org_translation
                     translation_id = self.db_interface.add_translation_history(
                         self.config_name,
-                        save_obj
+                        save_obj,
+                        db
                     )
                 
                 self.logger.info(f"翻译完成: {translation_obj.original_text[:50]}...")
@@ -425,7 +430,7 @@ class ImprovedTranslator:
         self._init_llm_api()
         self.logger.info(f"开始翻译文件: {file_path}")
         self.progress_manager.set_translated_status(ProgressManager.STATUS_RUNNING, file_path)
-        
+        db = None
         try:
             # 提取翻译对象
             translate_objects = self.extract_translate_objects(file_path)
@@ -460,7 +465,7 @@ class ImprovedTranslator:
                     temp_file.unlink()
             else:
                 start_index = file_progress.translated_count
-            
+            db = self.db_interface.get_sqlite_connection(self.config_name)
             with open(temp_file, 'a', encoding='utf-8') as f:
                 # 从指定位置开始翻译
                 for i in range(start_index, total_count):
@@ -472,7 +477,7 @@ class ImprovedTranslator:
                     self.logger.info(f"翻译进度: {i + 1}/{total_count}")
                     
                     # 翻译单个对象
-                    translated_obj = self.translate_text(obj)
+                    translated_obj = self.translate_text(obj, db)
                     translate_objects[i] = translated_obj
                     
                     # 如果翻译成功，立即更新进度管理器
@@ -495,6 +500,8 @@ class ImprovedTranslator:
         finally:
             if not do_not_chage_state:
                 self.progress_manager.set_translated_status(ProgressManager.STATUS_IDLE, file_path)
+            if db:
+                db.close()
             
     
     def apply_translations(self, file_path: str) -> bool:

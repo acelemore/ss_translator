@@ -65,29 +65,29 @@ class DatabaseInterface:
     
     def add_terminology_batch(self, terms_data: List[Dict]) -> Tuple[int, int, List[str]]:
         """批量添加专有名词"""
-        # 先在 SQLite 中批量添加
-        sqlite_success_count = 0
-        sqlite_error_count = 0
-        sqlite_errors = []
+        if not terms_data:
+            return 0, 0, []
         
-        for term_data in terms_data:
-            if self.sqlite_memory.add_terminology(
-                term_data.get('term', ''),
-                term_data.get('translation', ''),
-                term_data.get('domain', 'general'),
-                term_data.get('notes', '')
-            ):
-                sqlite_success_count += 1
-            else:
-                sqlite_error_count += 1
-                sqlite_errors.append(f"SQLite添加失败: {term_data.get('term', 'Unknown')}")
+        # 使用 SQLite 的批量插入方法
+        sqlite_success_count, sqlite_error_count = self.sqlite_memory.add_terminology_batch(terms_data)
         
         # 再在向量数据库中批量添加
         vector_success_count, vector_error_count, vector_errors = self.vector_memory.add_terminology_batch(terms_data)
         
+        # 收集错误信息
+        errors = []
+        if sqlite_error_count > 0:
+            errors.append(f"SQLite添加失败 {sqlite_error_count} 条记录")
+        if vector_error_count > 0:
+            errors.append(f"向量数据库添加失败 {vector_error_count} 条记录")
+        
+        # 添加向量数据库的具体错误信息
+        errors.extend(vector_errors)
+        
+        logger.info(f"批量添加专有名词完成: SQLite成功 {sqlite_success_count}, 向量数据库成功 {vector_success_count}")
+        
         # 返回综合结果，以 SQLite 为准
-        total_errors = sqlite_errors + vector_errors
-        return sqlite_success_count, sqlite_error_count, total_errors
+        return sqlite_success_count, sqlite_error_count, errors
     
     def search_terminology(self, text: str, threshold: float = 0.8) -> List[Dict]:
         """搜索专有名词，使用向量数据库的精确匹配"""
@@ -107,18 +107,11 @@ class DatabaseInterface:
     
     # ===================== 翻译历史管理 =====================
     
-    def add_translation_history(self, config_name: str, translation_obj: TranslationObject) -> str:
+    def add_translation_history(self, config_name: str, translation_obj: TranslationObject, sql_db = None) -> str:
         """添加翻译历史到两个数据库"""
-        # 确保有 translation_key
-        if not translation_obj.translation_key:
-            source_text = translation_obj.original_text
-            translation_key = hashlib.md5(
-                (source_text + translation_obj.file_name + str(datetime.now())).encode('utf-8')
-            ).hexdigest()
-            translation_obj.translation_key = translation_key
-        
+
         # 先添加到 SQLite（主要数据存储）
-        sqlite_success = self.sqlite_memory.add_translation(config_name, translation_obj)
+        sqlite_success = self.sqlite_memory.add_translation(config_name, translation_obj, sql_db)
         
         # 再添加到向量数据库（只存储用于语义搜索的字段）
         vector_key = ""
@@ -137,14 +130,18 @@ class DatabaseInterface:
         
         return sqlite_success
     
-    def get_exact_translation(self, config_name: str, source_text: str = "", translation_key: str = "") -> Optional[TranslationObject]:
+    def get_exact_translation(self, config_name: str, source_text: str = "", translation_key: str = "", db = None) -> Optional[TranslationObject]:
         """获取精确匹配的翻译，直接使用 SQLite 查询"""
         if translation_key:
-            return self.sqlite_memory.get_translation_by_key(config_name, translation_key)
+            return self.sqlite_memory.get_translation_by_key(config_name, translation_key, db)
         elif source_text:
             # 使用 SQLite 进行精确文本匹配
             return self.sqlite_memory.get_translation_by_original_text(config_name, source_text)
         return None
+    
+    def get_sqlite_connection(self, config_name: str):
+        """获取指定配置的 SQLite 连接, 用户自行管理生命周期"""
+        return self.sqlite_memory.get_translation_connection(config_name)
     
     def get_translation_by_key(self, config_name: str, translation_key: str) -> Optional[TranslationObject]:
         """根据 translation_key 获取翻译，直接使用 SQLite"""
@@ -285,15 +282,7 @@ class DatabaseInterface:
         """
         if not translation_objects:
             return 0, 0, []
-        
-        # 确保所有对象都有 translation_key
-        for translation_obj in translation_objects:
-            if not translation_obj.translation_key:
-                source_text = translation_obj.original_text
-                translation_key = hashlib.md5(
-                    (source_text + translation_obj.file_name + str(datetime.now())).encode('utf-8')
-                ).hexdigest()
-                translation_obj.translation_key = translation_key
+    
         
         # 先批量更新 SQLite（主要数据存储）
         sqlite_success_count, sqlite_error_count = self.sqlite_memory.update_translation_batch(config_name, translation_objects)

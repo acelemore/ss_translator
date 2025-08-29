@@ -466,9 +466,6 @@ class VectorTranslationMemory:
             
             # 使用translation_key作为ID，如果没有则生成一个
             translation_key = translation_obj.translation_key
-            if not translation_key:
-                # 如果translation_key为空，生成一个新的
-                translation_key = hashlib.md5((source_text + translation_obj.file_name + str(datetime.now())).encode('utf-8')).hexdigest()
             
             # 精简metadata，只存储语义搜索必需的字段
             metadata = {
