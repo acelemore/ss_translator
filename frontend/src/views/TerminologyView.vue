@@ -106,10 +106,11 @@
         <!-- 分页 -->
         <div class="pagination-container">
           <el-pagination
-            v-model="currentPage"
+            :current-page="currentPage"
             :page-size="pageSize"
             :total="filteredTermsAll.length"
             layout="prev, pager, next, jumper, total"
+            @current-change="handlePageChange"
           />
         </div>
 
@@ -409,6 +410,10 @@ const formatDate = (date) => {
   return new Date(date).toLocaleDateString()
 }
 
+const handlePageChange = (page) => {
+  currentPage.value = page
+}
+
 // 监听配置状态变化
 watch(() => appStore.isConfigSelected, (newVal) => {
   if (newVal && terms.value.length === 0) {
@@ -419,6 +424,17 @@ watch(() => appStore.isConfigSelected, (newVal) => {
 // 监听搜索和过滤条件变化，重置页码
 watch([searchText, categoryFilter], () => {
   currentPage.value = 1
+})
+
+// 监听总页数变化，调整当前页码
+watch(() => filteredTermsAll.value.length, (newLength) => {
+  const maxPage = Math.ceil(newLength / pageSize.value)
+  if (maxPage > 0 && currentPage.value > maxPage) {
+    currentPage.value = maxPage
+  }
+  if (newLength === 0) {
+    currentPage.value = 1
+  }
 })
 
 // 生命周期
