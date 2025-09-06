@@ -88,7 +88,7 @@ class TranslateHelperCSV(TranslateHelper):
                 try:
                     sample = csvfile.read(1024)
                     csvfile.seek(0)
-                    delimiter = sniffer.sniff(sample).delimiter
+                    # delimiter = sniffer.sniff(sample).delimiter
                 except Exception as e:
                     self.logger.warning(f"无法自动检测CSV分隔符，使用默认逗号: {e}")
                 
@@ -191,7 +191,7 @@ class TranslateHelperCSV(TranslateHelper):
                 try:
                     sample = csvfile.read(1024)
                     csvfile.seek(0)
-                    delimiter = sniffer.sniff(sample).delimiter
+                    # delimiter = sniffer.sniff(sample).delimiter
                 except Exception as e:
                     self.logger.warning(f"无法自动检测CSV分隔符，使用默认逗号: {e}")
                 

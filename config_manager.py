@@ -374,10 +374,10 @@ class ConfigManager:
                 sample = csvfile.read(1024)
                 csvfile.seek(0)
                 sniffer = csv.Sniffer()
-                try:
-                    delimiter = sniffer.sniff(sample).delimiter
-                except:
-                    delimiter = ','
+                # try:
+                #     delimiter = sniffer.sniff(sample).delimiter
+                # except:
+                delimiter = ','
                 
                 reader = csv.DictReader(csvfile, delimiter=delimiter)
                 
