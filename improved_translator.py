@@ -139,7 +139,6 @@ class ImprovedTranslator:
         if not translation_obj.original_text or not translation_obj.original_text.strip():
             return translation_obj
         
-        processed_text, placeholders_map = self.process_text_placeholder(translation_obj.original_text)
         # 检查是否有完全匹配的翻译记忆
         if self.db_interface:
             # 优先使用translation_key查询
@@ -171,6 +170,8 @@ class ImprovedTranslator:
                         db
                     )
                 return translation_obj
+            
+        processed_text, placeholders_map = self.process_text_placeholder(translation_obj.original_text)
         
         # 处理占位符
         tmp_i = 1
@@ -294,7 +295,7 @@ class ImprovedTranslator:
                     # 创建用于保存的翻译对象副本
                     save_obj = translation_obj.copy()
                     save_obj.process_text = processed_text
-                    save_obj.translation = org_translation
+                    save_obj.translation = translation
                     translation_id = self.db_interface.add_translation_history(
                         self.config_name,
                         save_obj,
