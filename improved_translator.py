@@ -282,6 +282,13 @@ class ImprovedTranslator:
                 if org_translation and placeholders_map:
                     translation = self.validate_placeholders_and_parse(translation, placeholders_map)
 
+                if translation_obj.context == "script":
+                    # csv script字段的特殊处理
+                    for i in range(len(translation)):
+                        char = translation[i]
+                        if ord(char) == 0x00a:  # '\n'
+                            translation = translation.replace(char, '\n')
+
                 # 将响应内容里的英文引号替换为中文引号
                 translation = translation.replace("”", "\"").replace("’", "\'").replace("“", "\"").replace("‘", "\'").replace(",", "，")
                 

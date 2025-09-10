@@ -163,8 +163,8 @@ class JARTranslateHelper(TranslateHelper):
         return not self._is_user_visible_text(text)
     
     def get_llm_user_prompt(self, translation_obj: TranslationObject,
-                           similar_translations: List[Dict] = None,
-                           found_terms: List[Dict] = None) -> str:
+                           similar_translations: Optional[List[Dict]] = None,
+                           found_terms: Optional[List[Dict]] = None) -> str:
         """
         获取JAR文件专用的LLM用户提示语
         """
@@ -237,9 +237,14 @@ class JARTranslateHelper(TranslateHelper):
         js_translations = []
         for key, obj in translations_by_key.items():
             if obj.translation and obj.translation.strip():
+                # 获取待应用的文本
+                approved_text = obj.approved_text if obj.approved else obj.original_text
+                # 对approved_text进行二次处理，处理控制字符与中文字符的空格问题
+                processed_text = self._process_control_chars_with_chinese(approved_text)
+                
                 js_translations.append({
                     'original': obj.original_text,
-                    'translation': obj.approved_text if obj.approved else obj.original_text,
+                    'translation': processed_text,
                     'translation_key': obj.translation_key,
                     'context': obj.context
                 })
@@ -295,7 +300,7 @@ class JARTranslateHelper(TranslateHelper):
             except:
                 pass
     
-    def _extract_text_content_with_js(self, jar_path: str) -> Dict[str, any]:
+    def _extract_text_content_with_js(self, jar_path: str) -> Dict[str, Any]:
         """
         使用JavaScript方法提取JAR中的文本内容
         """
@@ -362,7 +367,7 @@ class JARTranslateHelper(TranslateHelper):
                 except Exception as e:
                     self.logger.warning(f"清理临时文件失败: {e}")
     
-    def _apply_text_filters(self, js_extracted: Dict[str, any]) -> Dict[str, any]:
+    def _apply_text_filters(self, js_extracted: Dict[str, Any]) -> Dict[str, Any]:
         """对JavaScript提取的文本应用Python的过滤规则"""
         filtered_texts = {
             'properties_files': js_extracted.get('properties_files', {}),
@@ -481,5 +486,73 @@ class JARTranslateHelper(TranslateHelper):
         camel_pattern = r'[a-z][A-Z]|[A-Z][a-z][A-Z]'
         if re.search(camel_pattern, text):
             return True
+        
+        return False
+    
+    def _process_control_chars_with_chinese(self, text: str) -> str:
+        """
+        处理控制字符与中文字符之间的空格问题
+        当ord(char) < 32时，说明是个控制字符，这个字符不能直接与中文字符连接，要加空格
+        如果控制字符的前一个是中文字符，则在前面加空格
+        如果控制字符的后面是中文字符，则后面要加空格
+        前后都是中文则前后都要加个空格
+        """
+        if not text:
+            return text
+        
+        result = []
+        chars = list(text)
+        
+        for i, char in enumerate(chars):
+            if ord(char) < 32:  # 控制字符
+                # 检查前一个字符是否为中文
+                prev_is_chinese = False
+                if i > 0:
+                    prev_char = chars[i - 1]
+                    prev_is_chinese = self._is_chinese_char(prev_char)
+                
+                # 检查后一个字符是否为中文
+                next_is_chinese = False
+                if i < len(chars) - 1:
+                    next_char = chars[i + 1]
+                    next_is_chinese = self._is_chinese_char(next_char)
+                
+                # 根据前后字符情况添加空格
+                if prev_is_chinese:
+                    result.append(' ')
+                
+                result.append(char)
+                
+                if next_is_chinese:
+                    result.append(' ')
+            else:
+                result.append(char)
+        
+        return ''.join(result)
+    
+    def _is_chinese_char(self, char: str) -> bool:
+        """
+        判断字符是否为中文字符
+        包括汉字、中文标点符号等
+        """
+        if not char:
+            return False
+        
+        # 中文字符的Unicode范围
+        chinese_ranges = [
+            (0x4E00, 0x9FFF),   # 汉字基本区
+            (0x3400, 0x4DBF),   # 汉字扩展A区
+            (0x20000, 0x2A6DF), # 汉字扩展B区
+            (0x2A700, 0x2B73F), # 汉字扩展C区
+            (0x2B740, 0x2B81F), # 汉字扩展D区
+            (0x2B820, 0x2CEAF), # 汉字扩展E区
+            (0x3000, 0x303F),   # 中文标点符号
+            (0xFF00, 0xFFEF),   # 全角字符
+        ]
+        
+        char_code = ord(char)
+        for start, end in chinese_ranges:
+            if start <= char_code <= end:
+                return True
         
         return False

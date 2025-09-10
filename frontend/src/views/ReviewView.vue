@@ -377,7 +377,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, watch, nextTick } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Search, ArrowDown } from '@element-plus/icons-vue'
 import { useAppStore } from '../stores/app'
@@ -647,6 +647,52 @@ const selectFile = async (file) => {
   }
 }
 
+// 刷新当前文件数据 - 用于批量操作后强制更新界面
+const refreshCurrentFileData = async () => {
+  if (!selectedFile.value) return
+  
+  try {
+    const data = await translationAPI.getTranslationReview(selectedFile.value.path)
+    if (data.error) {
+      ElMessage.error(data.error)
+    } else {
+      // 保存当前的筛选条件和页码
+      const currentFilterStatus = filterStatus.value
+      const currentFilterLlmSuggestion = filterLlmSuggestion.value
+      const currentCustomFilter = customFilter.value
+      const currentSearchText = searchText.value
+      const currentPageNum = currentPage.value
+      
+      // 更新翻译数据
+      translations.value = data.translations.map(item => ({
+        ...item,
+        suggestions: []
+      }))
+      
+      // 强制触发Vue的响应性更新
+      await nextTick()
+      
+      // 恢复筛选条件和页码
+      filterStatus.value = currentFilterStatus
+      filterLlmSuggestion.value = currentFilterLlmSuggestion
+      customFilter.value = currentCustomFilter
+      searchText.value = currentSearchText
+      currentPage.value = currentPageNum
+      
+      // 再次等待DOM更新
+      await nextTick()
+      
+      // 清空修改标记
+      modifiedIndices.value.clear()
+      
+      // 刷新文件列表以更新统计信息
+      loadTranslationFiles()
+    }
+  } catch (error) {
+    console.error('刷新当前文件数据失败:', error)
+  }
+}
+
 const backToFileList = async () => {
   // 如果有未保存的修改，先进行保存
   if (modifiedIndices.value.size > 0) {
@@ -820,6 +866,10 @@ const approveAllFiltered = async () => {
 
     // 自动保存修改
     await saveReview()
+    
+    // 批量操作后强制刷新当前文件数据
+    await refreshCurrentFileData()
+    
     ElMessage.success(`已将 ${itemsToProcess} 条翻译应用LLM翻译结果并保存`)
   } catch (error) {
     // 用户取消
@@ -855,6 +905,10 @@ const keepAllOriginal = async () => {
 
     // 自动保存修改
     await saveReview()
+    
+    // 批量操作后强制刷新当前文件数据
+    await refreshCurrentFileData()
+    
     ElMessage.success(`已将 ${itemsToProcess} 条翻译标记为保留原文并保存`)
   } catch (error) {
     // 用户取消
@@ -900,6 +954,10 @@ const resetAllFiltered = async () => {
 
     // 自动保存修改
     await saveReview()
+    
+    // 批量操作后强制刷新当前文件数据
+    await refreshCurrentFileData()
+    
     ElMessage.success(`已重置 ${itemsToProcess} 条翻译的审核状态并保存`)
   } catch (error) {
     // 用户取消
