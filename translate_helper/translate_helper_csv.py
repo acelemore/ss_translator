@@ -258,7 +258,8 @@ class TranslateHelperCSV(TranslateHelper):
         def replace_quoted_text(match):
             quoted_content = match.group(1)
             if quoted_content in translations:
-                return f'"{translations[quoted_content]}"'
+                trs = translations[quoted_content].replace("\r\n", "\n")
+                return f'"{trs}"'
             return match.group(0)
         
         return re.sub(r'"((?:[^"\\]|\\.|[\r\n])*?)"', replace_quoted_text, text, flags=re.DOTALL)

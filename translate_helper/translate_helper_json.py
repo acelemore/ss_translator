@@ -337,7 +337,7 @@ class JSONTranslateHelper(TranslateHelper):
             return False
         
         # 不能是路径字符串
-        if ('/' in text or '\\' in text):
+        if (text.startswith("./") or (text.startswith('/') and not text.startswith("//")) or text.startswith('\\')):
             return False
         
         return True

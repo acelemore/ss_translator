@@ -496,6 +496,8 @@ class JARTranslateHelper(TranslateHelper):
         如果控制字符的前一个是中文字符，则在前面加空格
         如果控制字符的后面是中文字符，则后面要加空格
         前后都是中文则前后都要加个空格
+        
+        特殊处理：ord(char) == 1 (\u0001) 时，无论任何情况都要在字符的前后加空格
         """
         if not text:
             return text
