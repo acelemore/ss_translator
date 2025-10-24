@@ -258,7 +258,7 @@ class TranslateHelperCSV(TranslateHelper):
         def replace_quoted_text(match):
             quoted_content = match.group(1)
             if quoted_content in translations:
-                trs = translations[quoted_content].replace("\r\n", "\n")
+                trs = self._normalize_translated_text(translations[quoted_content])
                 return f'"{trs}"'
             return match.group(0)
         
@@ -325,6 +325,13 @@ class TranslateHelperCSV(TranslateHelper):
                 translated_parts.append(part)
         
         return separator.join(translated_parts)
+
+    def _normalize_translated_text(self, text: str) -> str:
+        """确保翻译写回CSV时仍为单行表示"""
+        if text is None:
+            return ""
+        normalized = text.replace('\r\n', '\n').replace('\r', '\n')
+        return normalized.replace('\n', '\\n')
         
 def get_raw_text(text_list: list) -> list:
     """
