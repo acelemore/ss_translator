@@ -20,6 +20,7 @@ along with ss_translator.  If not, see <https://www.gnu.org/licenses/>.
 改进的翻译器 - 负责LLM调用和翻译流程管理
 分离关注点，使用helper类处理不同文件类型的具体逻辑
 """
+import json5
 import json
 import logging
 import os
@@ -251,26 +252,20 @@ class ImprovedTranslator:
                 result = {}
                 try:
                     # 尝试直接解析
-                    result = json.loads(message) # type: ignore
+                    result = json5.loads(message) # type: ignore
                     
-                except json.JSONDecodeError:
+                except Exception as json_error:
                     # 如果直接解析失败，尝试修复JSON
-                    self.logger.warning(f"JSON解析失败，尝试修复: {message}")
-                    try:
-                        fixed_message = self._fix_json_response(message) # type: ignore
-                        result = json.loads(fixed_message)
-                        self.logger.info("JSON修复成功")
-                    except Exception as fix_error:
-                        self.logger.error(f"JSON修复也失败: {fix_error}")
-                        self.logger.warning(f"解析LLM响应失败 (尝试 {attempt + 1})")
-                        if attempt == max_retries - 1:
-                            # 最后一次尝试，尝试提取纯文本作为翻译结果
-                            translation_obj.translation = message # type: ignore
-                            translation_obj.is_translated = True
-                            translation_obj.is_suggested_to_translate = False
-                            translation_obj.llm_reason = "LLM响应格式不正确，此为原始响应"
-                            return translation_obj
-                        continue
+                    
+                    self.logger.warning(f"解析LLM响应失败 (尝试 {attempt + 1})")
+                    if attempt == max_retries - 1:
+                        # 最后一次尝试，尝试提取纯文本作为翻译结果
+                        translation_obj.translation = message # type: ignore
+                        translation_obj.is_translated = True
+                        translation_obj.is_suggested_to_translate = False
+                        translation_obj.llm_reason = "LLM响应格式不正确，此为原始响应"
+                        return translation_obj
+                    continue
 
 
                 org_translation = result.get("translation", "")

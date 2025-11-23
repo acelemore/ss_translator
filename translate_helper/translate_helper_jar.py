@@ -422,7 +422,7 @@ class JARTranslateHelper(TranslateHelper):
             return False
         
         # 2. 包含斜杠的通常是文件路径，排除
-        if '/' in actual_text or '\\' in actual_text:
+        if actual_text.startswith("./") or (actual_text.startswith("/") and not actual_text.startswith("//")):
             return False
         
         # 3. 纯数字排除
@@ -433,7 +433,8 @@ class JARTranslateHelper(TranslateHelper):
         if actual_text.isupper() and ' ' not in actual_text:
             return False
         
-        if '_' in actual_text:
+        # 下划线风格
+        if '_' in actual_text and ' ' not in actual_text:
             return False
         
         # 5. 检查是否为驼峰风格（大驼峰或小驼峰）
