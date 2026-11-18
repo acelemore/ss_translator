@@ -52,3 +52,4 @@ yarn-error.log*
 
 # 打包工具临时文件
 temp_nodejs/
+ss_translator.code-workspace
